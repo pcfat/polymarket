@@ -213,6 +213,10 @@ class TradingEngine {
           }
 
           // Risk-reward ratio guard
+          // For binary outcome tokens (Polymarket), price represents implied probability
+          // and also the cost per token. If the outcome wins, each token pays $1.00
+          // Potential gain = $1.00 - price (profit if outcome wins)
+          // Potential loss = price (loss if outcome doesn't win)
           const MAX_RISK_REWARD_RATIO = parseFloat(this.config.maxRiskReward) || 5;
           
           const potentialGain = (1.0 - tokenPrice); // Max gain per $1 of token
@@ -268,12 +272,13 @@ class TradingEngine {
       // Market price represents implied probability for binary outcome tokens (0-1 range)
       const impliedProb = price;
       
-      // Use compositeScore to adjust probability
-      // For YES: positive score means we think YES is more likely than market
-      // For NO: negative score means we think NO is more likely (YES less likely)
+      // Use compositeScore to adjust probability based on our signal
+      // Direction multiplier aligns the score with the trade outcome:
+      // - For YES trades: direction=1, so positive score increases our probability estimate
+      // - For NO trades: direction=-1, so negative score (bearish) becomes positive aligned edge
       const compositeScore = analysis.compositeScore;
       const direction = outcome === 'YES' ? 1 : -1;
-      const alignedEdge = compositeScore * direction; // Edge aligned with our trade direction
+      const alignedEdge = compositeScore * direction;
       
       // If edge is negative (we're betting against our signal), skip trade
       if (alignedEdge <= 0) {
@@ -291,9 +296,17 @@ class TradingEngine {
       // Clamp between 0.05 and 0.95 to avoid extreme Kelly sizing
       const estimatedProb = Math.min(0.95, Math.max(0.05, impliedProb + alignedEdge));
       
-      const odds = 1 / price; // Decimal odds
+      // Calculate decimal odds - defensive check to prevent division by zero
+      if (price <= 0) {
+        console.log(`⚠️ Invalid price ${price} for Kelly calculation, skipping`);
+        return;
+      }
+      const odds = 1 / price;
+      
+      // Calculate Kelly fraction using standard formula
+      // If odds = 1 (price = 1), denominator becomes 0, but this is caught by price validation above
       const kellyFraction = ((estimatedProb * (odds - 1)) - (1 - estimatedProb)) / (odds - 1);
-      const halfKelly = Math.max(0, kellyFraction / 2); // Half Kelly, minimum 0
+      const halfKelly = Math.max(0, kellyFraction / 2); // Half Kelly for conservative sizing
       
       let tradeAmount = halfKelly * bankroll;
       

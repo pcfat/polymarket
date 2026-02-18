@@ -392,7 +392,8 @@ async function updateConfig() {
             oddsMinPrice: parseFloat(document.getElementById('oddsMinPrice').value),
             oddsMaxPrice: parseFloat(document.getElementById('oddsMaxPrice').value),
             maxRiskReward: parseFloat(document.getElementById('maxRiskReward').value),
-            bankroll: parseFloat(document.getElementById('bankroll').value)
+            bankroll: parseFloat(document.getElementById('bankroll').value),
+            maxExposure: parseFloat(document.getElementById('maxExposure').value)
         };
         
         await apiCall('/api/config', 'PUT', config);

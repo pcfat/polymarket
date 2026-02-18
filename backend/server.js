@@ -30,7 +30,8 @@ const tradingConfig = {
   oddsMinPrice: parseFloat(process.env.ODDS_MIN_PRICE) || 0.30,
   oddsMaxPrice: parseFloat(process.env.ODDS_MAX_PRICE) || 0.75,
   maxRiskReward: parseFloat(process.env.MAX_RISK_REWARD) || 5,
-  bankroll: parseFloat(process.env.BANKROLL) || 100
+  bankroll: parseFloat(process.env.BANKROLL) || 100,
+  maxExposure: parseFloat(process.env.MAX_EXPOSURE) || null // Will default to bankroll * 0.5
 };
 
 // Socket.IO connection handling
@@ -201,7 +202,7 @@ app.delete('/api/records', (req, res) => {
 // Update strategy configuration
 app.put('/api/config', (req, res) => {
   try {
-    const { tradeAmount, tradeWindowSeconds, oddsMinPrice, oddsMaxPrice, maxRiskReward, bankroll } = req.body;
+    const { tradeAmount, tradeWindowSeconds, oddsMinPrice, oddsMaxPrice, maxRiskReward, bankroll, maxExposure } = req.body;
     
     const newConfig = {};
     if (tradeAmount !== undefined) newConfig.tradeAmount = parseFloat(tradeAmount);
@@ -210,9 +211,16 @@ app.put('/api/config', (req, res) => {
     if (oddsMaxPrice !== undefined) newConfig.oddsMaxPrice = parseFloat(oddsMaxPrice);
     if (maxRiskReward !== undefined) newConfig.maxRiskReward = parseFloat(maxRiskReward);
     if (bankroll !== undefined) newConfig.bankroll = parseFloat(bankroll);
+    if (maxExposure !== undefined) newConfig.maxExposure = parseFloat(maxExposure);
+
+    // If bankroll changed but maxExposure wasn't provided, auto-update maxExposure to 50% of bankroll
+    // This matches the DEFAULT_MAX_EXPOSURE_RATIO constant in TradingEngine
+    if (bankroll !== undefined && maxExposure === undefined) {
+      newConfig.maxExposure = parseFloat(bankroll) * 0.5;
+    }
 
     Object.assign(tradingConfig, newConfig);
-    engine.updateConfig(tradingConfig);
+    engine.updateConfig(newConfig); // Pass only the changes
 
     res.json({ success: true, config: tradingConfig });
   } catch (error) {

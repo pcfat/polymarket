@@ -248,6 +248,18 @@ class TradingEngine {
       
       const price = outcome === 'YES' ? prices.yes_price : prices.no_price;
       
+      // Guard against invalid prices
+      if (!price || price <= 0 || price >= 1) {
+        console.log(`⚠️ Invalid price ${price} for ${outcome}, skipping trade`);
+        this.io.emit('tradeSkipped', {
+          market_id: market.market_id,
+          coin: market.coin,
+          reason: `Invalid price ${price} for ${outcome}`,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
       // Half Kelly position sizing
       // Kelly fraction = (p * (odds - 1) - (1 - p)) / (odds - 1)
       // where p = estimated probability of winning, odds = decimal odds

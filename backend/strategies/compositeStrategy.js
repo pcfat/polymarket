@@ -13,9 +13,18 @@ const DEFAULT_WEIGHTS = {
  * Main composite market analysis function
  * Combines technical analysis, news sentiment, and order flow analysis
  * 
+ * OUTCOME MAPPING:
+ * - YES = Up = bullish = token index 0 (price increases)
+ * - NO = Down = bearish = token index 1 (price decreases)
+ * 
+ * This mapping ensures compatibility with the database CHECK constraint
+ * which enforces outcome IN ('YES', 'NO'). The Polymarket API uses
+ * 'Up'/'Down' for 15-minute crypto markets, but we standardize to YES/NO
+ * for internal representation and settlement.
+ * 
  * @param {string} coin - Coin symbol or market question
- * @param {string} yesTokenId - YES token ID for order flow
- * @param {string} noTokenId - NO token ID for order flow
+ * @param {string} yesTokenId - YES token ID for order flow (Up token)
+ * @param {string} noTokenId - NO token ID for order flow (Down token)
  * @param {Object} weights - Strategy weights { technical, news, orderFlow }
  * @returns {Object} - Complete analysis with decision
  */

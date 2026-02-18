@@ -34,39 +34,55 @@ class TradingEngine {
     }
   }
 
-  start() {
+  async start() {
     if (this.isRunning) {
       console.log('⚠️ Trading engine already running');
-      return;
+      throw new Error('Trading engine already running');
     }
 
-    this.isRunning = true;
-    this.db.updateStatus({ is_running: true, last_heartbeat: Date.now() });
-    
     console.log('🚀 Starting trading engine...');
     
-    // Scan markets every N seconds
-    const scanInterval = parseInt(process.env.MARKET_SCAN_INTERVAL) || 30;
-    this.marketScanJob = cron.schedule(`*/${scanInterval} * * * * *`, () => {
-      this.scanMarkets();
-    });
+    try {
+      // Perform initial market scan before marking as running
+      // This ensures we have markets loaded and reveals any API issues immediately
+      await this.scanMarkets();
+      console.log('✅ Initial market scan completed successfully');
+      
+      // Only mark as running after successful initial scan
+      this.isRunning = true;
+      this.db.updateStatus({ is_running: true, last_heartbeat: Date.now() });
+      
+      // Scan markets every N seconds
+      const scanInterval = parseInt(process.env.MARKET_SCAN_INTERVAL) || 30;
+      this.marketScanJob = cron.schedule(`*/${scanInterval} * * * * *`, () => {
+        this.scanMarkets();
+      });
 
-    // Check trading opportunities every N seconds
-    const checkInterval = parseInt(process.env.TRADE_CHECK_INTERVAL) || 10;
-    this.tradeCheckJob = cron.schedule(`*/${checkInterval} * * * * *`, () => {
-      this.checkTradingOpportunities();
-    });
+      // Check trading opportunities every N seconds
+      const checkInterval = parseInt(process.env.TRADE_CHECK_INTERVAL) || 10;
+      this.tradeCheckJob = cron.schedule(`*/${checkInterval} * * * * *`, () => {
+        this.checkTradingOpportunities();
+      });
 
-    // Settle paper trades every 30 seconds
-    this.settlementJob = cron.schedule('*/30 * * * * *', () => {
-      this.settlePaperTrades();
-    });
-
-    // Initial scan
-    this.scanMarkets();
-    
-    this.emitStatus();
-    console.log('✅ Trading engine started');
+      // Settle paper trades every 30 seconds
+      this.settlementJob = cron.schedule('*/30 * * * * *', () => {
+        this.settlePaperTrades();
+      });
+      
+      this.emitStatus();
+      console.log('✅ Trading engine started');
+    } catch (error) {
+      // If initial scan fails, don't start the engine
+      console.error('❌ Failed to start trading engine:', error.message);
+      this.isRunning = false;
+      this.db.updateStatus({ is_running: false });
+      this.io.emit('error', { 
+        message: 'Failed to start trading engine', 
+        error: error.message,
+        details: 'Initial market scan failed. Check API connectivity and try again.'
+      });
+      throw error;
+    }
   }
 
   stop() {
@@ -101,7 +117,34 @@ class TradingEngine {
     try {
       console.log('🔍 Scanning 15-minute crypto markets...');
       const markets = await this.polymarket.get15MinuteCryptoMarkets();
+      
+      if (!markets || markets.length === 0) {
+        console.warn('⚠️ No markets returned from API');
+        this.io.emit('warning', { 
+          message: 'No active markets found',
+          timestamp: Date.now()
+        });
+      }
+      
       this.markets = markets;
+
+      // Clear processedTrades for expired markets to prevent memory leak
+      // and allow trading new markets for the same coins
+      const now = Date.now();
+      const activeMarketIds = new Set(markets.map(m => m.market_id));
+      const keysToDelete = [];
+      
+      for (const tradeKey of this.processedTrades) {
+        const marketId = tradeKey.split('_')[0];
+        if (!activeMarketIds.has(marketId)) {
+          keysToDelete.push(tradeKey);
+        }
+      }
+      
+      if (keysToDelete.length > 0) {
+        keysToDelete.forEach(key => this.processedTrades.delete(key));
+        console.log(`🧹 Cleared ${keysToDelete.length} expired market entries from processedTrades`);
+      }
 
       // Get prices for all markets and emit to frontend
       const marketsWithPrices = [];
@@ -148,7 +191,13 @@ class TradingEngine {
       console.log(`✅ Found ${markets.length} active 15-minute markets`);
     } catch (error) {
       console.error('❌ Error scanning markets:', error.message);
-      this.io.emit('error', { message: 'Failed to scan markets', error: error.message });
+      console.error('Stack trace:', error.stack);
+      this.io.emit('error', { 
+        message: 'Failed to scan markets', 
+        error: error.message,
+        timestamp: Date.now()
+      });
+      throw error; // Re-throw so start() can catch it
     }
   }
 
@@ -598,6 +647,10 @@ class TradingEngine {
   }
 
   // Helper function to determine market winner from Gamma API response
+  // Maps Polymarket outcomes to internal YES/NO representation:
+  // - 'Up' (bullish, token index 0) → 'YES'
+  // - 'Down' (bearish, token index 1) → 'NO'
+  // This mapping ensures compatibility with database CHECK constraint
   getMarketWinner(marketData) {
     if (!marketData) return null;
     const market = Array.isArray(marketData) ? marketData[0] : marketData;
@@ -619,7 +672,7 @@ class TradingEngine {
       if (noPrice >= this.RESOLUTION_PRICE_THRESHOLD) return 'NO';
     }
     
-    // Check closed/resolved status
+    // Check closed/resolved status with outcome mapping
     if (market.closed || market.resolved) {
       // Map API outcomes to internal representation
       // API returns "Up"/"Down", we use "YES"/"NO" internally for database compatibility
@@ -627,14 +680,14 @@ class TradingEngine {
         const winner = market.winning_side.toUpperCase();
         if (winner === 'UP') return 'YES';
         if (winner === 'DOWN') return 'NO';
-        // Also support old format for backward compatibility
+        // Also support YES/NO format for backward compatibility
         if (winner === 'YES' || winner === 'NO') return winner;
       }
       if (market.resolution) {
         const resolution = market.resolution.toUpperCase();
         if (resolution === 'UP') return 'YES';
         if (resolution === 'DOWN') return 'NO';
-        // Also support old format for backward compatibility
+        // Also support YES/NO format for backward compatibility
         if (resolution === 'YES' || resolution === 'NO') return resolution;
       }
     }
@@ -735,11 +788,6 @@ class TradingEngine {
     } catch (error) {
       console.error('❌ Error in settlePaperTrades:', error.message);
     }
-  }
-
-  updateConfig(newConfig) {
-    this.config = { ...this.config, ...newConfig };
-    console.log('⚙️ Configuration updated:', this.config);
   }
 
   updateWeights(newWeights) {

@@ -102,9 +102,9 @@ app.get('/api/status', (req, res) => {
 });
 
 // Start engine
-app.post('/api/start', (req, res) => {
+app.post('/api/start', async (req, res) => {
   try {
-    engine.start();
+    await engine.start();
     res.json({ success: true, message: 'Engine started' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -335,6 +335,11 @@ app.get('*', (req, res) => {
     const dbPath = process.env.DB_PATH || './trading.db';
     db = new DatabaseManager(dbPath);
     await db.initDatabase();
+    
+    // Reset is_running state on server restart (no cron jobs running yet)
+    // This prevents stale state when server was killed without graceful shutdown
+    db.updateStatus({ is_running: false });
+    console.log('✅ Reset is_running state to false on startup');
     
     // Initialize trading engine
     engine = new TradingEngine(db, tradingConfig, io);

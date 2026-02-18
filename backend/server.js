@@ -81,6 +81,7 @@ io.on('connection', (socket) => {
 app.get('/api/status', (req, res) => {
   const status = db.getStatus();
   res.json({
+    success: true,
     isRunning: status.is_running === 1,
     mode: status.mode,
     lastHeartbeat: status.last_heartbeat,

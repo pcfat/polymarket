@@ -372,13 +372,17 @@ app.get('*', (req, res) => {
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error.message);
   console.error('Stack trace:', error.stack);
-  // Log but don't crash - allow process to continue
+  // Uncaught exceptions leave the app in undefined state - must restart
+  console.error('⚠️ Process will exit in 1 second...');
+  setTimeout(() => {
+    process.exit(1);
+  }, 1000);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise);
   console.error('Reason:', reason);
-  // Log but don't crash - allow process to continue
+  // Log but don't crash for unhandled rejections - they're recoverable
 });
 
 // Graceful shutdown

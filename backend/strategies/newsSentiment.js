@@ -85,19 +85,19 @@ function getCoinNameForSearch(coin) {
  * @returns {Array|null} - Array of news articles or null if failed
  */
 async function fetchCryptoNews(coinName) {
-  const categoryMap = {
+  const coinToTickerMap = {
     'bitcoin': 'BTC',
     'ethereum': 'ETH',
     'solana': 'SOL',
     'ripple': 'XRP'
   };
-  const category = categoryMap[coinName] || 'BTC';
+  const ticker = coinToTickerMap[coinName] || 'BTC';
   
   try {
     // CryptoCompare free news API - no auth required for basic access
     const response = await axios.get('https://min-api.cryptocompare.com/data/v2/news/', {
       params: {
-        categories: category,
+        categories: ticker,
         lang: 'EN',
         sortOrder: 'latest'
       },

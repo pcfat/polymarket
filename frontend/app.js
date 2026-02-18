@@ -372,8 +372,6 @@ async function updateConfig() {
     try {
         const config = {
             tradeAmount: parseFloat(document.getElementById('tradeAmount').value),
-            buyThreshold: parseFloat(document.getElementById('buyThreshold').value),
-            sellThreshold: parseFloat(document.getElementById('sellThreshold').value),
             tradeWindowSeconds: parseInt(document.getElementById('tradeWindow').value)
         };
         
@@ -613,8 +611,6 @@ async function init() {
         // Load config
         if (statusData.config) {
             document.getElementById('tradeAmount').value = statusData.config.tradeAmount;
-            document.getElementById('buyThreshold').value = statusData.config.buyThreshold;
-            document.getElementById('sellThreshold').value = statusData.config.sellThreshold;
             document.getElementById('tradeWindow').value = statusData.config.tradeWindowSeconds;
         }
         

@@ -91,7 +91,7 @@ class TradingEngine {
           yes_price: prices.yes_price,
           no_price: prices.no_price,
           volume: market.volume,
-          liquidity: 0 // Not available in new format
+          liquidity: null // Liquidity not available in slug-based API response
         });
         
         // Add market with prices for frontend

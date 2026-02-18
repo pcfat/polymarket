@@ -57,8 +57,8 @@ io.on('connection', async (socket) => {
   const markets = engine.getMarkets();
   const marketsWithPrices = [];
   
+  // Markets are cached from last scan and include prices
   for (const market of markets) {
-    // Check if prices already available (from cache or recent scan)
     marketsWithPrices.push({
       market_id: market.market_id,
       question: market.question,

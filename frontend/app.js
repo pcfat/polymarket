@@ -52,7 +52,7 @@ function formatCountdown(endDateMs) {
     const remainingMs = endDateMs - now;
     
     if (remainingMs <= 0) {
-        return '已到期';
+        return '已過期';
     }
     
     const totalSeconds = Math.floor(remainingMs / 1000);

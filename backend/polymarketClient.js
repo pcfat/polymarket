@@ -192,10 +192,12 @@ class PolymarketClient {
   }
 
   // Check if market is within trading window
+  // Minimum 5-second buffer to avoid race conditions with market expiration
   isInTradingWindow(endDate, windowSeconds) {
+    const MIN_TRADING_BUFFER_SECONDS = 5;
     const timeLeft = this.getTimeUntilExpiration(endDate);
-    // Must be at least 5 seconds before end AND within window
-    return timeLeft > 5 && timeLeft <= windowSeconds;
+    // Must be at least MIN_TRADING_BUFFER_SECONDS before end AND within window
+    return timeLeft > MIN_TRADING_BUFFER_SECONDS && timeLeft <= windowSeconds;
   }
 }
 

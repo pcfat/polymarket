@@ -1,11 +1,35 @@
-const Database = require('better-sqlite3');
+const initSqlJs = require('sql.js');
+const fs = require('fs');
 const path = require('path');
 
 class DatabaseManager {
-  constructor(dbPath = './polymarket.db') {
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
+  constructor(dbPath = './trading.db') {
+    this.dbPath = dbPath;
+    this.db = null;
+    this.SQL = null;
+  }
+
+  async initDatabase() {
+    // Initialize sql.js
+    this.SQL = await initSqlJs();
+    
+    // Load existing database or create new one
+    if (fs.existsSync(this.dbPath)) {
+      const buffer = fs.readFileSync(this.dbPath);
+      this.db = new this.SQL.Database(buffer);
+      console.log('✅ Database loaded from file');
+    } else {
+      this.db = new this.SQL.Database();
+      console.log('✅ New database created');
+    }
+    
     this.initTables();
+  }
+
+  saveToFile() {
+    const data = this.db.export();
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(this.dbPath, buffer);
   }
 
   initTables() {
@@ -56,9 +80,10 @@ class DatabaseManager {
     `);
 
     // Initialize bot status if not exists
-    const status = this.db.prepare('SELECT * FROM bot_status WHERE id = 1').get();
+    const status = this.getStatus();
     if (!status) {
-      this.db.prepare('INSERT INTO bot_status (id, is_running, mode) VALUES (1, 0, ?)').run('paper');
+      this.db.run('INSERT INTO bot_status (id, is_running, mode) VALUES (1, 0, ?)', ['paper']);
+      this.saveToFile();
     }
 
     console.log('✅ Database tables initialized');
@@ -66,7 +91,14 @@ class DatabaseManager {
 
   // Bot Status Operations
   getStatus() {
-    return this.db.prepare('SELECT * FROM bot_status WHERE id = 1').get();
+    const stmt = this.db.prepare('SELECT * FROM bot_status WHERE id = 1');
+    if (stmt.step()) {
+      const result = stmt.getAsObject();
+      stmt.free();
+      return result;
+    }
+    stmt.free();
+    return null;
   }
 
   updateStatus(updates) {
@@ -96,18 +128,17 @@ class DatabaseManager {
 
     if (fields.length > 0) {
       values.push(1);
-      this.db.prepare(`UPDATE bot_status SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+      this.db.run(`UPDATE bot_status SET ${fields.join(', ')} WHERE id = ?`, values);
+      this.saveToFile();
     }
   }
 
   // Trade Operations
   insertTrade(trade) {
-    const stmt = this.db.prepare(`
+    this.db.run(`
       INSERT INTO trades (timestamp, mode, market_id, market_question, side, outcome, price, amount, shares, status, order_id, pnl, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    const info = stmt.run(
+    `, [
       trade.timestamp || Date.now(),
       trade.mode,
       trade.market_id,
@@ -121,9 +152,16 @@ class DatabaseManager {
       trade.order_id || null,
       trade.pnl || 0,
       trade.notes || null
-    );
+    ]);
     
-    return info.lastInsertRowid;
+    this.saveToFile();
+    
+    // Get last insert ID
+    const stmt = this.db.prepare('SELECT last_insert_rowid() as id');
+    stmt.step();
+    const result = stmt.getAsObject();
+    stmt.free();
+    return result.id;
   }
 
   getTrades(limit = 100, mode = null) {
@@ -138,11 +176,29 @@ class DatabaseManager {
     query += ' ORDER BY timestamp DESC LIMIT ?';
     params.push(limit);
     
-    return this.db.prepare(query).all(...params);
+    const stmt = this.db.prepare(query);
+    stmt.bind(params);
+    
+    const trades = [];
+    while (stmt.step()) {
+      trades.push(stmt.getAsObject());
+    }
+    stmt.free();
+    
+    return trades;
   }
 
   getTradeById(id) {
-    return this.db.prepare('SELECT * FROM trades WHERE id = ?').get(id);
+    const stmt = this.db.prepare('SELECT * FROM trades WHERE id = ?');
+    stmt.bind([id]);
+    
+    if (stmt.step()) {
+      const result = stmt.getAsObject();
+      stmt.free();
+      return result;
+    }
+    stmt.free();
+    return null;
   }
 
   updateTrade(id, updates) {
@@ -168,18 +224,25 @@ class DatabaseManager {
 
     if (fields.length > 0) {
       values.push(id);
-      this.db.prepare(`UPDATE trades SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+      this.db.run(`UPDATE trades SET ${fields.join(', ')} WHERE id = ?`, values);
+      this.saveToFile();
     }
+  }
+
+  updateTradeStatus(id, status, pnl) {
+    const updates = { status };
+    if (pnl !== undefined) {
+      updates.pnl = pnl;
+    }
+    this.updateTrade(id, updates);
   }
 
   // Market Snapshot Operations
   insertSnapshot(snapshot) {
-    const stmt = this.db.prepare(`
+    this.db.run(`
       INSERT INTO market_snapshots (timestamp, market_id, market_question, yes_price, no_price, volume, liquidity)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    return stmt.run(
+    `, [
       snapshot.timestamp || Date.now(),
       snapshot.market_id,
       snapshot.market_question,
@@ -187,11 +250,29 @@ class DatabaseManager {
       snapshot.no_price,
       snapshot.volume || 0,
       snapshot.liquidity || 0
-    ).lastInsertRowid;
+    ]);
+    
+    this.saveToFile();
+    
+    // Get last insert ID
+    const stmt = this.db.prepare('SELECT last_insert_rowid() as id');
+    stmt.step();
+    const result = stmt.getAsObject();
+    stmt.free();
+    return result.id;
   }
 
   getSnapshots(limit = 200) {
-    return this.db.prepare('SELECT * FROM market_snapshots ORDER BY timestamp DESC LIMIT ?').all(limit);
+    const stmt = this.db.prepare('SELECT * FROM market_snapshots ORDER BY timestamp DESC LIMIT ?');
+    stmt.bind([limit]);
+    
+    const snapshots = [];
+    while (stmt.step()) {
+      snapshots.push(stmt.getAsObject());
+    }
+    stmt.free();
+    
+    return snapshots;
   }
 
   // Statistics Operations
@@ -204,7 +285,14 @@ class DatabaseManager {
       params.push(mode);
     }
     
-    const stats = this.db.prepare(query).get(...params);
+    const stmt = this.db.prepare(query);
+    stmt.bind(params);
+    
+    let stats = { total_trades: 0, total_pnl: 0, avg_pnl: 0 };
+    if (stmt.step()) {
+      stats = stmt.getAsObject();
+    }
+    stmt.free();
     
     // Calculate win rate
     let winRateQuery = 'SELECT COUNT(*) as wins FROM trades WHERE pnl > 0';
@@ -215,8 +303,16 @@ class DatabaseManager {
       winRateParams.push(mode);
     }
     
-    const wins = this.db.prepare(winRateQuery).get(...winRateParams);
-    const winRate = stats.total_trades > 0 ? (wins.wins / stats.total_trades) * 100 : 0;
+    const winStmt = this.db.prepare(winRateQuery);
+    winStmt.bind(winRateParams);
+    
+    let wins = 0;
+    if (winStmt.step()) {
+      wins = winStmt.getAsObject().wins;
+    }
+    winStmt.free();
+    
+    const winRate = stats.total_trades > 0 ? (wins / stats.total_trades) * 100 : 0;
     
     return {
       total_trades: stats.total_trades || 0,
@@ -235,7 +331,9 @@ class DatabaseManager {
   }
 
   close() {
-    this.db.close();
+    if (this.db) {
+      this.db.close();
+    }
   }
 }
 

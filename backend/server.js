@@ -21,20 +21,15 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../frontend')));
 
-// Initialize database
-const dbPath = process.env.DB_PATH || './polymarket.db';
-const db = new DatabaseManager(dbPath);
-
-// Trading configuration
+// Database and engine will be initialized in async startup
+let db;
+let engine;
 const tradingConfig = {
   tradeAmount: process.env.TRADE_AMOUNT || 10,
   buyThreshold: process.env.BUY_THRESHOLD || 0.55,
   sellThreshold: process.env.SELL_THRESHOLD || 0.45,
   tradeWindowSeconds: process.env.TRADE_WINDOW_SECONDS || 120
 };
-
-// Initialize trading engine
-const engine = new TradingEngine(db, tradingConfig, io);
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
@@ -235,25 +230,41 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
-// Start server
-const PORT = process.env.PORT || 3001;
-const HOST = process.env.HOST || 'localhost';
-server.listen(PORT, () => {
-  console.log(`
+// Async startup to initialize database
+(async () => {
+  try {
+    // Initialize database
+    const dbPath = process.env.DB_PATH || './trading.db';
+    db = new DatabaseManager(dbPath);
+    await db.initDatabase();
+    
+    // Initialize trading engine
+    engine = new TradingEngine(db, tradingConfig, io);
+    
+    // Start server
+    const PORT = process.env.PORT || 3001;
+    const HOST = process.env.HOST || 'localhost';
+    server.listen(PORT, () => {
+      console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║  🤖 Polymarket 15分鐘加密貨幣自動交易系統                    ║
 ║  🌐 Server running on http://${HOST}:${PORT}             ║
 ║  📊 Database: ${dbPath}                                    ║
 ║  🎯 Mode: ${db.getStatus().mode.toUpperCase()}             ║
 ╚═══════════════════════════════════════════════════════════╝
-  `);
-});
+      `);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+})();
 
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down gracefully...');
-  engine.stop();
-  db.close();
+  if (engine) engine.stop();
+  if (db) db.close();
   server.close(() => {
     console.log('✅ Server closed');
     process.exit(0);

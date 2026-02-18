@@ -86,6 +86,9 @@ class PolymarketClient {
     const market = Array.isArray(marketData) ? marketData[0] : marketData;
     
     // Extract token IDs with multiple fallback paths
+    // IMPORTANT: For 15-minute crypto markets, the API returns clobTokenIds where:
+    // - Index 0 = Up token (mapped to yes_token_id for bullish/YES outcome)
+    // - Index 1 = Down token (mapped to no_token_id for bearish/NO outcome)
     let yesTokenId = null;
     let noTokenId = null;
     
@@ -100,6 +103,8 @@ class PolymarketClient {
     }
     
     if (Array.isArray(tokenIds) && tokenIds.length >= 2) {
+      // Map Up token (index 0) to yes_token_id (bullish)
+      // Map Down token (index 1) to no_token_id (bearish)
       yesTokenId = tokenIds[0] || null;
       noTokenId = tokenIds[1] || null;
     }
@@ -117,6 +122,9 @@ class PolymarketClient {
     }
     
     // Extract outcome prices as fallback for when CLOB API fails
+    // outcomePrices array mapping for 15-minute crypto markets:
+    // - Index 0 = Up price (mapped to yes_price for bullish/YES)
+    // - Index 1 = Down price (mapped to no_price for bearish/NO)
     let outcomePrices = market.outcomePrices;
     if (typeof outcomePrices === 'string') {
       try {
@@ -137,6 +145,7 @@ class PolymarketClient {
       active: market.active !== false,
       volume: parseFloat(market.volume || 0),
       // Include fallback prices from Gamma API
+      // Index 0 = Up/YES (bullish), Index 1 = Down/NO (bearish)
       fallback_yes_price: Array.isArray(outcomePrices) && outcomePrices.length >= 1 ? (parseFloat(outcomePrices[0]) || 0) : null,
       fallback_no_price: Array.isArray(outcomePrices) && outcomePrices.length >= 2 ? (parseFloat(outcomePrices[1]) || 0) : null
     };

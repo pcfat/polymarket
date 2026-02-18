@@ -306,11 +306,13 @@ class TradingEngine {
       }
       
       // Estimate our probability using the aligned edge
-      // Clamp between 0.05 and 0.95 to avoid extreme Kelly sizing
-      // Lower bound (0.05): Prevents betting on very unlikely events
-      // Upper bound (0.95): Prevents over-confidence and excessive leverage
+      // Clamp to avoid extreme Kelly sizing:
+      // - Lower bound (0.05): Prevents betting on very unlikely events
+      // - Upper bound (0.95): Prevents over-confidence and excessive leverage
       // These bounds ensure Kelly fraction stays reasonable even with high edge estimates
-      const estimatedProb = Math.min(0.95, Math.max(0.05, impliedProb + alignedEdge));
+      const MIN_PROBABILITY = 0.05;
+      const MAX_PROBABILITY = 0.95;
+      const estimatedProb = Math.min(MAX_PROBABILITY, Math.max(MIN_PROBABILITY, impliedProb + alignedEdge));
       
       // Calculate decimal odds
       const odds = 1 / price;
@@ -330,10 +332,10 @@ class TradingEngine {
       // Calculate Kelly fraction using standard formula
       const kellyFraction = ((estimatedProb * (odds - 1)) - (1 - estimatedProb)) / (odds - 1);
       
-      // Use Half Kelly for conservative sizing
-      // Also cap at 25% of bankroll to prevent extreme sizing from high odds
-      const MAX_KELLY_FRACTION = 0.25;
-      const halfKelly = Math.min(MAX_KELLY_FRACTION, Math.max(0, kellyFraction / 2));
+      // Use Half Kelly for conservative sizing, then cap at max fraction
+      // This protects against extreme sizing when odds are very high (low prices)
+      const MAX_KELLY_FRACTION = 0.25; // Never risk more than 25% of bankroll on one trade
+      const cappedHalfKelly = Math.min(MAX_KELLY_FRACTION, Math.max(0, kellyFraction / 2));
       
       // If Kelly says don't bet (fraction <= 0), skip the trade
       if (kellyFraction <= 0) {
@@ -348,7 +350,7 @@ class TradingEngine {
       }
       
       // Apply Half Kelly sizing to bankroll
-      let tradeAmount = halfKelly * bankroll;
+      let tradeAmount = cappedHalfKelly * bankroll;
       
       // Apply min/max bounds
       const MIN_TRADE = 1;   // Minimum $1 trade

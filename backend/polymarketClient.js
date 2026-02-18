@@ -57,7 +57,7 @@ class PolymarketClient {
             const endDateMs = (ts + 900) * 1000;
             // Only include if not expired (endDate > now)
             if (endDateMs > Date.now()) {
-              // Log debug info
+              // Debug logging - helps troubleshoot token ID and price extraction
               const marketData = Array.isArray(market) ? market[0] : market;
               console.log(`[DEBUG] Market found: ${slug}`);
               console.log(`[DEBUG] clobTokenIds: ${JSON.stringify(marketData.clobTokenIds || 'N/A')}`);
@@ -206,7 +206,7 @@ class PolymarketClient {
       }
 
       // Fallback: use prices from Gamma API (outcomePrices)
-      if (market.fallback_yes_price !== null && market.fallback_yes_price !== undefined) {
+      if (market.fallback_yes_price != null) {
         return {
           yes_price: market.fallback_yes_price || 0,
           no_price: market.fallback_no_price || 0,

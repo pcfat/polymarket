@@ -237,6 +237,80 @@ app.get('/api/markets', (req, res) => {
   }
 });
 
+// Get latest strategy analysis
+app.get('/api/analysis', (req, res) => {
+  try {
+    const analysis = engine.getLatestAnalysis();
+    res.json({
+      success: true,
+      analysis,
+      count: analysis.length
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update strategy weights
+app.put('/api/weights', (req, res) => {
+  try {
+    const { technical, news, orderFlow } = req.body;
+    
+    // Validate that all weights are provided
+    if (technical === undefined || news === undefined || orderFlow === undefined) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'All weights must be provided (technical, news, orderFlow)' 
+      });
+    }
+    
+    // Validate that weights are numbers
+    const techWeight = parseFloat(technical);
+    const newsWeight = parseFloat(news);
+    const ofWeight = parseFloat(orderFlow);
+    
+    if (isNaN(techWeight) || isNaN(newsWeight) || isNaN(ofWeight)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'All weights must be valid numbers' 
+      });
+    }
+    
+    // Validate that weights sum to approximately 1.0 (allow small tolerance)
+    const sum = techWeight + newsWeight + ofWeight;
+    if (Math.abs(sum - 1.0) > 0.01) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Weights must sum to 1.0 (current sum: ${sum.toFixed(3)})` 
+      });
+    }
+    
+    // Validate that weights are positive
+    if (techWeight < 0 || newsWeight < 0 || ofWeight < 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'All weights must be non-negative' 
+      });
+    }
+    
+    const newWeights = {
+      technical: techWeight,
+      news: newsWeight,
+      orderFlow: ofWeight
+    };
+    
+    engine.updateWeights(newWeights);
+    
+    res.json({ 
+      success: true, 
+      weights: newWeights,
+      message: 'Strategy weights updated successfully'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Serve frontend
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../frontend/index.html'));

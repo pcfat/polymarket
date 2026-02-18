@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const PolymarketClient = require('./polymarketClient');
+const { analyzeMarket, DEFAULT_WEIGHTS } = require('./strategies/compositeStrategy');
 
 class TradingEngine {
   constructor(database, config, io) {
@@ -16,6 +17,8 @@ class TradingEngine {
     this.marketScanJob = null;
     this.tradeCheckJob = null;
     this.processedTrades = new Set(); // Track processed market+outcome combinations
+    this.strategyWeights = DEFAULT_WEIGHTS; // Strategy weights for composite analysis
+    this.latestAnalysis = {}; // Store latest analysis for each market
   }
 
   start() {
@@ -130,8 +133,6 @@ class TradingEngine {
       const status = this.db.getStatus();
       const mode = status.mode;
       const tradeWindowSeconds = parseInt(this.config.tradeWindowSeconds) || 120;
-      const buyThreshold = parseFloat(this.config.buyThreshold) || 0.55;
-      const sellThreshold = parseFloat(this.config.sellThreshold) || 0.45;
 
       for (const market of this.markets) {
         // Check if market is within trading window
@@ -139,24 +140,38 @@ class TradingEngine {
           continue;
         }
 
-        // Get current prices
+        // Get current prices to extract token IDs
         const prices = await this.polymarket.getMarketPrices(market);
-        const yesProbability = prices.yes_price;
+        const yesTokenId = prices.yes_token || market.tokens?.[0]?.token_id;
+        const noTokenId = prices.no_token || market.tokens?.[1]?.token_id;
 
-        // Determine trading signal
-        let signal = null;
-        let outcome = null;
+        // Run composite strategy analysis
+        const analysis = await analyzeMarket(
+          market.question, // Pass the question which contains coin info
+          yesTokenId,
+          noTokenId,
+          this.strategyWeights
+        );
 
-        if (yesProbability >= buyThreshold) {
-          signal = 'BUY';
-          outcome = 'YES';
-        } else if (yesProbability <= sellThreshold) {
-          signal = 'BUY';
-          outcome = 'NO';
-        }
+        // Store latest analysis for this market
+        this.latestAnalysis[market.market_id] = {
+          ...analysis,
+          market_id: market.market_id,
+          coin: market.question,
+          timestamp: Date.now()
+        };
 
-        if (signal && outcome) {
-          const tradeKey = `${market.market_id}_${outcome}`;
+        // Emit analysis data to frontend via Socket.IO
+        this.io.emit('analysis', {
+          market_id: market.market_id,
+          coin: market.question,
+          ...analysis,
+          timestamp: Date.now()
+        });
+
+        // Use analysis decision to determine trades
+        if (analysis.decision === 'BUY' && analysis.outcome) {
+          const tradeKey = `${market.market_id}_${analysis.outcome}`;
           
           // Avoid duplicate trades for the same market+outcome
           if (this.processedTrades.has(tradeKey)) {
@@ -164,7 +179,7 @@ class TradingEngine {
           }
 
           this.processedTrades.add(tradeKey);
-          await this.executeTrade(market, signal, outcome, prices, mode);
+          await this.executeTrade(market, analysis.decision, analysis.outcome, prices, mode, analysis);
         }
       }
 
@@ -174,13 +189,44 @@ class TradingEngine {
     }
   }
 
-  async executeTrade(market, side, outcome, prices, mode) {
+  async executeTrade(market, side, outcome, prices, mode, analysis) {
     try {
-      const tradeAmount = parseFloat(this.config.tradeAmount) || 10;
+      let tradeAmount = parseFloat(this.config.tradeAmount) || 10;
+      
+      // Adjust trade amount based on analysis recommendation
+      if (analysis && analysis.tradeAmount === 'increased') {
+        tradeAmount = tradeAmount * 1.5; // 50% increase for high confidence
+      } else if (analysis && analysis.tradeAmount === 'reduced') {
+        tradeAmount = tradeAmount * 0.5; // 50% reduction for low confidence
+      }
+      
       const price = outcome === 'YES' ? prices.yes_price : prices.no_price;
       const shares = price > 0 ? tradeAmount / price : 0;
 
       console.log(`📊 [${mode.toUpperCase()}] Executing trade: ${side} ${outcome} on "${market.question}"`);
+      if (analysis) {
+        console.log(`   📈 Composite Score: ${analysis.compositeScore.toFixed(3)}, Confidence: ${(analysis.confidence * 100).toFixed(1)}%`);
+      }
+
+      // Create analysis summary for notes
+      let analysisNotes = '';
+      if (analysis) {
+        analysisNotes = JSON.stringify({
+          compositeScore: analysis.compositeScore,
+          confidence: analysis.confidence,
+          decision: analysis.decision,
+          tradeAmount: analysis.tradeAmount,
+          breakdown: {
+            technical: { score: analysis.breakdown?.technical?.score ?? 0 },
+            news: { score: analysis.breakdown?.news?.score ?? 0 },
+            orderFlow: { 
+              score: analysis.breakdown?.orderFlow?.score ?? 0,
+              confidence: analysis.breakdown?.orderFlow?.confidence ?? 0
+            }
+          },
+          weights: analysis.weights
+        });
+      }
 
       const trade = {
         timestamp: Date.now(),
@@ -193,7 +239,7 @@ class TradingEngine {
         amount: tradeAmount,
         shares: shares,
         status: 'pending',
-        notes: `Auto-trade triggered. YES probability: ${prices.yes_price.toFixed(4)}`
+        notes: analysisNotes || `Auto-trade triggered. YES probability: ${prices.yes_price.toFixed(4)}`
       };
 
       if (mode === 'paper') {
@@ -239,6 +285,15 @@ class TradingEngine {
   updateConfig(newConfig) {
     this.config = { ...this.config, ...newConfig };
     console.log('⚙️ Configuration updated:', this.config);
+  }
+
+  updateWeights(newWeights) {
+    this.strategyWeights = { ...this.strategyWeights, ...newWeights };
+    console.log('⚙️ Strategy weights updated:', this.strategyWeights);
+  }
+
+  getLatestAnalysis() {
+    return Object.values(this.latestAnalysis);
   }
 
   emitStatus() {

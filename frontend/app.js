@@ -19,6 +19,7 @@ const updateConfigBtn = document.getElementById('updateConfigBtn');
 const tradeFilter = document.getElementById('tradeFilter');
 const marketCount = document.getElementById('marketCount');
 const marketsGrid = document.getElementById('marketsGrid');
+const analysisGrid = document.getElementById('analysisGrid');
 const tradesBody = document.getElementById('tradesBody');
 const logsContainer = document.getElementById('logsContainer');
 const confirmModal = document.getElementById('confirmModal');
@@ -26,10 +27,15 @@ const confirmTitle = document.getElementById('confirmTitle');
 const confirmMessage = document.getElementById('confirmMessage');
 const confirmYes = document.getElementById('confirmYes');
 const confirmNo = document.getElementById('confirmNo');
+const technicalWeight = document.getElementById('technicalWeight');
+const newsWeight = document.getElementById('newsWeight');
+const orderFlowWeight = document.getElementById('orderFlowWeight');
+const weightsSum = document.getElementById('weightsSum');
 
 // State
 let currentModeValue = 'paper';
 let pendingAction = null;
+let analysisData = {}; // Store analysis data by market_id
 
 // Constants
 const MAX_QUESTION_LENGTH = 50;
@@ -159,6 +165,12 @@ socket.on('recordsCleared', () => {
 
 socket.on('error', (data) => {
     addLog(`錯誤: ${data.message}`, 'error');
+});
+
+socket.on('analysis', (data) => {
+    // Store analysis data
+    analysisData[data.market_id] = data;
+    updateAnalysisDisplay();
 });
 
 // Update Functions
@@ -367,6 +379,9 @@ async function updateConfig() {
         
         await apiCall('/api/config', 'PUT', config);
         addLog('策略設定已更新', 'success');
+        
+        // Also update weights
+        await updateWeights();
     } catch (error) {
         // Error already logged
     }
@@ -377,6 +392,157 @@ async function loadTrades(mode = null) {
         const query = mode ? `?mode=${mode}` : '';
         const data = await apiCall(`/api/trades${query}`);
         updateTradesTable(data.trades);
+    } catch (error) {
+        // Error already logged
+    }
+}
+
+// Analysis display function
+function updateAnalysisDisplay() {
+    const analyses = Object.values(analysisData);
+    
+    if (analyses.length === 0) {
+        analysisGrid.innerHTML = '<div class="no-data">暫無分析數據</div>';
+        return;
+    }
+    
+    analysisGrid.innerHTML = analyses.map(analysis => {
+        const coinName = escapeHtml(extractCoinName(analysis.coin));
+        const tech = analysis.breakdown?.technical || {};
+        const news = analysis.breakdown?.news || {};
+        const orderFlow = analysis.breakdown?.orderFlow || {};
+        
+        const techScore = tech.score || 0;
+        const newsScore = news.score || 0;
+        const ofScore = orderFlow.score || 0;
+        
+        const decision = analysis.decision || 'HOLD';
+        const confidence = (analysis.confidence || 0) * 100;
+        const decisionText = escapeHtml(getDecisionText(decision, analysis.outcome));
+        
+        return `
+            <div class="analysis-card">
+                <div class="analysis-header">
+                    <h4>${coinName}</h4>
+                    <div class="decision-badge decision-${decision.toLowerCase()}">${decisionText}</div>
+                </div>
+                
+                <div class="signal-bars">
+                    <div class="signal-item">
+                        <label>📈 技術面</label>
+                        <div class="score-bar-container">
+                            <div class="score-bar" style="--score: ${techScore}">
+                                <div class="score-fill"></div>
+                            </div>
+                            <span class="score-value">${techScore.toFixed(2)}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="signal-item">
+                        <label>📰 新聞面</label>
+                        <div class="score-bar-container">
+                            <div class="score-bar" style="--score: ${newsScore}">
+                                <div class="score-fill"></div>
+                            </div>
+                            <span class="score-value">${newsScore.toFixed(2)}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="signal-item">
+                        <label>💹 訂單流</label>
+                        <div class="score-bar-container">
+                            <div class="score-bar" style="--score: ${ofScore}">
+                                <div class="score-fill"></div>
+                            </div>
+                            <span class="score-value">${ofScore.toFixed(2)}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="composite-info">
+                    <div class="composite-score">
+                        <span>綜合分數:</span>
+                        <strong style="color: ${getScoreColor(analysis.compositeScore)}">${analysis.compositeScore.toFixed(3)}</strong>
+                    </div>
+                    <div class="confidence-meter">
+                        <span>信心度:</span>
+                        <div class="confidence-bar">
+                            <div class="confidence-fill" style="width: ${confidence}%"></div>
+                        </div>
+                        <strong>${confidence.toFixed(0)}%</strong>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Helper functions for analysis display
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function extractCoinName(questionOrCoin) {
+    const lower = questionOrCoin.toLowerCase();
+    if (lower.includes('btc') || lower.includes('bitcoin')) return 'BTC';
+    if (lower.includes('eth') || lower.includes('ethereum')) return 'ETH';
+    if (lower.includes('sol') || lower.includes('solana')) return 'SOL';
+    if (lower.includes('xrp') || lower.includes('ripple')) return 'XRP';
+    return 'CRYPTO';
+}
+
+function getDecisionText(decision, outcome) {
+    if (decision === 'HOLD') return '持有';
+    if (decision === 'BUY' && outcome === 'YES') return '買入看漲';
+    if (decision === 'BUY' && outcome === 'NO') return '買入看跌';
+    return decision;
+}
+
+function getScoreColor(score) {
+    if (score > 0.3) return 'var(--accent-green)';
+    if (score < -0.3) return 'var(--accent-red)';
+    return 'var(--text-secondary)';
+}
+
+// Update weights sum display
+function updateWeightsSum() {
+    const tech = parseFloat(technicalWeight.value) || 0;
+    const news = parseFloat(newsWeight.value) || 0;
+    const of = parseFloat(orderFlowWeight.value) || 0;
+    const sum = tech + news + of;
+    
+    weightsSum.value = sum.toFixed(2);
+    
+    // Highlight if sum is not 1.0
+    if (Math.abs(sum - 1.0) > 0.01) {
+        weightsSum.style.color = 'var(--accent-red)';
+    } else {
+        weightsSum.style.color = 'var(--accent-green)';
+    }
+}
+
+// Update strategy weights
+async function updateWeights() {
+    try {
+        const tech = parseFloat(technicalWeight.value);
+        const news = parseFloat(newsWeight.value);
+        const of = parseFloat(orderFlowWeight.value);
+        
+        const sum = tech + news + of;
+        if (Math.abs(sum - 1.0) > 0.01) {
+            addLog(`權重總和必須等於 1.0 (當前: ${sum.toFixed(2)})`, 'error');
+            return;
+        }
+        
+        await apiCall('/api/weights', 'PUT', {
+            technical: tech,
+            news: news,
+            orderFlow: of
+        });
+        
+        addLog('策略權重已更新', 'success');
     } catch (error) {
         // Error already logged
     }
@@ -411,6 +577,11 @@ clearRecordsBtn.addEventListener('click', () => {
 });
 
 updateConfigBtn.addEventListener('click', updateConfig);
+
+// Weight input listeners
+technicalWeight.addEventListener('input', updateWeightsSum);
+newsWeight.addEventListener('input', updateWeightsSum);
+orderFlowWeight.addEventListener('input', updateWeightsSum);
 
 tradeFilter.addEventListener('change', (e) => {
     const mode = e.target.value || null;

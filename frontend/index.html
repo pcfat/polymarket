@@ -88,6 +88,29 @@
                     <input type="number" id="tradeWindow" min="10" step="10" value="120">
                 </div>
             </div>
+            
+            <div class="config-divider"></div>
+            
+            <h4>📊 策略權重設定</h4>
+            <div class="config-grid">
+                <div class="config-item">
+                    <label>技術面權重</label>
+                    <input type="number" id="technicalWeight" min="0" max="1" step="0.05" value="0.45">
+                </div>
+                <div class="config-item">
+                    <label>新聞面權重</label>
+                    <input type="number" id="newsWeight" min="0" max="1" step="0.05" value="0.30">
+                </div>
+                <div class="config-item">
+                    <label>訂單流權重</label>
+                    <input type="number" id="orderFlowWeight" min="0" max="1" step="0.05" value="0.25">
+                </div>
+                <div class="config-item">
+                    <label>權重總和</label>
+                    <input type="text" id="weightsSum" value="1.00" readonly disabled>
+                </div>
+            </div>
+            
             <button id="updateConfigBtn" class="btn btn-primary">💾 更新設定</button>
         </div>
 
@@ -96,6 +119,14 @@
             <h3>活躍市場 <span id="marketCount" class="badge">0</span></h3>
             <div id="marketsGrid" class="markets-grid">
                 <div class="no-data">暫無活躍市場</div>
+            </div>
+        </div>
+
+        <!-- Strategy Analysis Section -->
+        <div class="analysis-section">
+            <h3>📊 策略分析</h3>
+            <div id="analysisGrid" class="analysis-grid">
+                <div class="no-data">暫無分析數據</div>
             </div>
         </div>
 

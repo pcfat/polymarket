@@ -195,6 +195,58 @@ class TradingEngine {
             continue;
           }
 
+          // Odds range filter - skip trades at extreme prices
+          const ODDS_MIN_PRICE = parseFloat(this.config.oddsMinPrice) || 0.30;
+          const ODDS_MAX_PRICE = parseFloat(this.config.oddsMaxPrice) || 0.75;
+          
+          const tokenPrice = analysis.outcome === 'YES' ? prices.yes_price : prices.no_price;
+          
+          if (tokenPrice < ODDS_MIN_PRICE || tokenPrice > ODDS_MAX_PRICE) {
+            console.log(`⚠️ Skipping trade: ${market.coin} ${analysis.outcome} price ${tokenPrice.toFixed(4)} outside range [${ODDS_MIN_PRICE}-${ODDS_MAX_PRICE}]`);
+            this.io.emit('tradeSkipped', {
+              market_id: market.market_id,
+              coin: market.coin,
+              reason: `Price ${tokenPrice.toFixed(4)} outside odds range [${ODDS_MIN_PRICE}-${ODDS_MAX_PRICE}]`,
+              timestamp: Date.now()
+            });
+            continue;
+          }
+
+          // Risk-reward ratio guard
+          // For binary outcome tokens (Polymarket), price represents implied probability
+          // and also the cost per token. If the outcome wins, each token pays $1.00
+          // Potential gain = $1.00 - price (profit if outcome wins)
+          // Potential loss = price (loss if outcome doesn't win)
+          const MAX_RISK_REWARD_RATIO = parseFloat(this.config.maxRiskReward) || 5;
+          
+          const potentialGain = (1.0 - tokenPrice); // Max gain per $1 of token
+          const potentialLoss = tokenPrice;          // Max loss per $1 of token
+          
+          // Guard against division by zero when token price is very close to 1.0
+          if (potentialGain <= 0.001) {
+            console.log(`⚠️ Skipping trade: ${market.coin} price ${tokenPrice.toFixed(4)} too close to 1.0`);
+            this.io.emit('tradeSkipped', {
+              market_id: market.market_id,
+              coin: market.coin,
+              reason: `Price ${tokenPrice.toFixed(4)} too close to 1.0 (no potential gain)`,
+              timestamp: Date.now()
+            });
+            continue;
+          }
+          
+          const riskRewardRatio = potentialLoss / potentialGain;
+          
+          if (riskRewardRatio > MAX_RISK_REWARD_RATIO) {
+            console.log(`⚠️ Skipping trade: ${market.coin} risk/reward ratio ${riskRewardRatio.toFixed(1)}:1 exceeds max ${MAX_RISK_REWARD_RATIO}:1`);
+            this.io.emit('tradeSkipped', {
+              market_id: market.market_id,
+              coin: market.coin,
+              reason: `Risk/reward ${riskRewardRatio.toFixed(1)}:1 exceeds max ${MAX_RISK_REWARD_RATIO}:1`,
+              timestamp: Date.now()
+            });
+            continue;
+          }
+
           this.processedTrades.add(tradeKey);
           await this.executeTrade(market, analysis.decision, analysis.outcome, prices, mode, analysis);
         }
@@ -208,16 +260,109 @@ class TradingEngine {
 
   async executeTrade(market, side, outcome, prices, mode, analysis) {
     try {
-      let tradeAmount = parseFloat(this.config.tradeAmount) || 10;
-      
-      // Adjust trade amount based on analysis recommendation
-      if (analysis && analysis.tradeAmount === 'increased') {
-        tradeAmount = tradeAmount * 1.5; // 50% increase for high confidence
-      } else if (analysis && analysis.tradeAmount === 'reduced') {
-        tradeAmount = tradeAmount * 0.5; // 50% reduction for low confidence
-      }
+      const baseAmount = parseFloat(this.config.tradeAmount) || 10;
+      const bankroll = parseFloat(this.config.bankroll) || 100;
       
       const price = outcome === 'YES' ? prices.yes_price : prices.no_price;
+      
+      // Guard against invalid prices
+      if (!price || price <= 0 || price >= 1) {
+        console.log(`⚠️ Invalid price ${price} for ${outcome}, skipping trade`);
+        this.io.emit('tradeSkipped', {
+          market_id: market.market_id,
+          coin: market.coin,
+          reason: `Invalid price ${price} for ${outcome}`,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
+      // Half Kelly position sizing
+      // Kelly fraction = (p * (odds - 1) - (1 - p)) / (odds - 1)
+      // where p = estimated probability of winning, odds = decimal odds
+      // Half Kelly = Kelly / 2 (more conservative)
+      
+      // Market price represents implied probability for binary outcome tokens (0-1 range)
+      const impliedProb = price;
+      
+      // Use compositeScore to adjust probability based on our signal
+      // Direction multiplier aligns the score with the trade outcome:
+      // - For YES trades: direction=1, so positive score increases our probability estimate
+      // - For NO trades: direction=-1, so negative score (bearish) becomes positive aligned edge
+      const compositeScore = analysis.compositeScore;
+      const direction = outcome === 'YES' ? 1 : -1;
+      const alignedEdge = compositeScore * direction;
+      
+      // If edge is negative (we're betting against our signal), skip trade
+      if (alignedEdge <= 0) {
+        console.log(`⚠️ Trade direction misaligned with signal: compositeScore=${compositeScore.toFixed(3)}, outcome=${outcome}, skipping`);
+        this.io.emit('tradeSkipped', {
+          market_id: market.market_id,
+          coin: market.coin,
+          reason: `Signal misalignment: score=${compositeScore.toFixed(3)} for ${outcome}`,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
+      // Estimate our probability using the aligned edge
+      // Clamp to avoid extreme Kelly sizing:
+      // - Lower bound (0.05): Prevents betting on very unlikely events
+      // - Upper bound (0.95): Prevents over-confidence and excessive leverage
+      // These bounds ensure Kelly fraction stays reasonable even with high edge estimates
+      const MIN_PROBABILITY = 0.05;
+      const MAX_PROBABILITY = 0.95;
+      const estimatedProb = Math.min(MAX_PROBABILITY, Math.max(MIN_PROBABILITY, impliedProb + alignedEdge));
+      
+      // Calculate decimal odds
+      const odds = 1 / price;
+      
+      // Guard against odds = 1 (or very close), which causes division by zero
+      if (Math.abs(odds - 1.0) < 0.01) {
+        console.log(`⚠️ Odds too close to 1.0 (price=${price.toFixed(4)}), skipping Kelly calculation`);
+        this.io.emit('tradeSkipped', {
+          market_id: market.market_id,
+          coin: market.coin,
+          reason: `Odds ${odds.toFixed(2)} too close to 1.0`,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
+      // Calculate Kelly fraction using standard formula
+      const kellyFraction = ((estimatedProb * (odds - 1)) - (1 - estimatedProb)) / (odds - 1);
+      
+      // Use Half Kelly for conservative sizing, then cap at max fraction
+      // This protects against extreme sizing when odds are very high (low prices)
+      const MAX_KELLY_FRACTION = 0.25; // Never risk more than 25% of bankroll on one trade
+      const cappedHalfKelly = Math.min(MAX_KELLY_FRACTION, Math.max(0, kellyFraction / 2));
+      
+      // If Kelly says don't bet (fraction <= 0), skip the trade
+      if (kellyFraction <= 0) {
+        console.log(`⚠️ Kelly criterion says no edge: fraction=${kellyFraction.toFixed(4)}, skipping trade`);
+        this.io.emit('tradeSkipped', {
+          market_id: market.market_id,
+          coin: market.coin,
+          reason: `Kelly criterion shows no edge (fraction=${kellyFraction.toFixed(4)})`,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
+      // Apply Half Kelly sizing to bankroll
+      let tradeAmount = cappedHalfKelly * bankroll;
+      
+      // Apply min/max bounds
+      const MIN_TRADE = 1;   // Minimum $1 trade
+      const MAX_TRADE_MULTIPLIER = 2; // Maximum trade size as multiplier of base amount
+      const MAX_TRADE = baseAmount * MAX_TRADE_MULTIPLIER;
+      tradeAmount = Math.min(MAX_TRADE, Math.max(MIN_TRADE, tradeAmount));
+      
+      // Note: We don't apply additional confidence multipliers here because:
+      // - Kelly formula already incorporates our confidence through estimatedProb
+      // - Additional multipliers would distort the mathematically optimal Kelly sizing
+      // - The Half Kelly approach (50% of full Kelly) already provides conservative sizing
+      
       const shares = price > 0 ? tradeAmount / price : 0;
 
       console.log(`📊 [${mode.toUpperCase()}] Executing trade: ${side} ${outcome} on "${market.question}"`);

@@ -43,26 +43,33 @@ class PolymarketClient {
       const coins = ['btc', 'eth', 'sol', 'xrp'];
       const currentTs = this.getCurrentWindowTimestamp();
       const nextTs = currentTs + 900;
+      const prevTs = currentTs - 900;  // Also try previous window
       
       const markets = [];
       
       for (const coin of coins) {
-        // Try current window
-        const currentSlug = `${coin}-updown-15m-${currentTs}`;
-        const currentMarket = await this.getMarketBySlug(currentSlug);
-        
-        if (currentMarket) {
-          const endDateMs = (currentTs + 900) * 1000; // Convert to milliseconds
-          markets.push(this.formatMarket(currentMarket, coin.toUpperCase(), currentSlug, endDateMs));
-        }
-        
-        // Try next window
-        const nextSlug = `${coin}-updown-15m-${nextTs}`;
-        const nextMarket = await this.getMarketBySlug(nextSlug);
-        
-        if (nextMarket) {
-          const endDateMs = (nextTs + 900) * 1000; // Convert to milliseconds
-          markets.push(this.formatMarket(nextMarket, coin.toUpperCase(), nextSlug, endDateMs));
+        // Try previous, current, and next windows
+        for (const ts of [prevTs, currentTs, nextTs]) {
+          const slug = `${coin}-updown-15m-${ts}`;
+          const market = await this.getMarketBySlug(slug);
+          
+          if (market) {
+            const endDateMs = (ts + 900) * 1000;
+            // Only include if not expired (endDate > now)
+            if (endDateMs > Date.now()) {
+              // Debug logging - helps troubleshoot token ID and price extraction
+              const marketData = Array.isArray(market) ? market[0] : market;
+              console.log(`[DEBUG] Market found: ${slug}`);
+              console.log(`[DEBUG] clobTokenIds: ${JSON.stringify(marketData.clobTokenIds || 'N/A')}`);
+              console.log(`[DEBUG] outcomePrices: ${JSON.stringify(marketData.outcomePrices || 'N/A')}`);
+              
+              const formatted = this.formatMarket(market, coin.toUpperCase(), slug, endDateMs);
+              // Avoid duplicates
+              if (!markets.find(m => m.slug === slug)) {
+                markets.push(formatted);
+              }
+            }
+          }
         }
       }
 
@@ -78,13 +85,45 @@ class PolymarketClient {
     // Handle both single object and array response formats
     const market = Array.isArray(marketData) ? marketData[0] : marketData;
     
-    // Extract token IDs
+    // Extract token IDs with multiple fallback paths
     let yesTokenId = null;
     let noTokenId = null;
     
-    if (market.clobTokenIds && Array.isArray(market.clobTokenIds)) {
-      yesTokenId = market.clobTokenIds[0] || null;
-      noTokenId = market.clobTokenIds[1] || null;
+    // Try clobTokenIds (could be array or JSON string)
+    let tokenIds = market.clobTokenIds;
+    if (typeof tokenIds === 'string') {
+      try {
+        tokenIds = JSON.parse(tokenIds);
+      } catch(e) {
+        tokenIds = null;
+      }
+    }
+    
+    if (Array.isArray(tokenIds) && tokenIds.length >= 2) {
+      yesTokenId = tokenIds[0] || null;
+      noTokenId = tokenIds[1] || null;
+    }
+    
+    // Fallback: try tokens array
+    if (!yesTokenId && market.tokens && Array.isArray(market.tokens) && market.tokens.length >= 2) {
+      yesTokenId = market.tokens[0]?.token_id || null;
+      noTokenId = market.tokens[1]?.token_id || null;
+    }
+
+    // Fallback: try side_a / side_b
+    if (!yesTokenId && market.side_a && market.side_b) {
+      yesTokenId = market.side_a.id || null;
+      noTokenId = market.side_b.id || null;
+    }
+    
+    // Extract outcome prices as fallback for when CLOB API fails
+    let outcomePrices = market.outcomePrices;
+    if (typeof outcomePrices === 'string') {
+      try {
+        outcomePrices = JSON.parse(outcomePrices);
+      } catch(e) {
+        outcomePrices = null;
+      }
     }
     
     return {
@@ -96,7 +135,10 @@ class PolymarketClient {
       yes_token_id: yesTokenId,
       no_token_id: noTokenId,
       active: market.active !== false,
-      volume: parseFloat(market.volume || 0)
+      volume: parseFloat(market.volume || 0),
+      // Include fallback prices from Gamma API
+      fallback_yes_price: Array.isArray(outcomePrices) && outcomePrices.length >= 1 ? (parseFloat(outcomePrices[0]) || 0) : null,
+      fallback_no_price: Array.isArray(outcomePrices) && outcomePrices.length >= 2 ? (parseFloat(outcomePrices[1]) || 0) : null
     };
   }
 
@@ -140,47 +182,49 @@ class PolymarketClient {
   // Get market prices (YES and NO)
   async getMarketPrices(market) {
     try {
-      // Check for new format (yes_token_id, no_token_id)
       const yesToken = market.yes_token_id;
       const noToken = market.no_token_id;
 
-      if (!yesToken || !noToken) {
-        // Fallback to old format if needed
-        if (market.tokens && market.tokens.length >= 2) {
-          const yesTokenOld = market.tokens[0]?.token_id;
-          const noTokenOld = market.tokens[1]?.token_id;
-          
-          if (yesTokenOld && noTokenOld) {
-            const [yesMidpoint, noMidpoint] = await Promise.all([
-              this.getMidpoint(yesTokenOld).catch(() => ({ mid: '0' })),
-              this.getMidpoint(noTokenOld).catch(() => ({ mid: '0' }))
-            ]);
+      if (yesToken && noToken) {
+        const [yesMidpoint, noMidpoint] = await Promise.all([
+          this.getMidpoint(yesToken).catch(() => ({ mid: '0' })),
+          this.getMidpoint(noToken).catch(() => ({ mid: '0' }))
+        ]);
 
-            return {
-              yes_price: parseFloat(yesMidpoint.mid || 0),
-              no_price: parseFloat(noMidpoint.mid || 0),
-              yes_token: yesTokenOld,
-              no_token: noTokenOld
-            };
-          }
+        const yesPrice = parseFloat(yesMidpoint.mid || 0);
+        const noPrice = parseFloat(noMidpoint.mid || 0);
+
+        // If CLOB prices are valid (non-zero), use them
+        if (yesPrice > 0 || noPrice > 0) {
+          return {
+            yes_price: yesPrice,
+            no_price: noPrice,
+            yes_token: yesToken,
+            no_token: noToken
+          };
         }
-        return { yes_price: 0, no_price: 0 };
       }
 
-      const [yesMidpoint, noMidpoint] = await Promise.all([
-        this.getMidpoint(yesToken).catch(() => ({ mid: '0' })),
-        this.getMidpoint(noToken).catch(() => ({ mid: '0' }))
-      ]);
+      // Fallback: use prices from Gamma API (outcomePrices)
+      if (market.fallback_yes_price != null) {
+        return {
+          yes_price: market.fallback_yes_price || 0,
+          no_price: market.fallback_no_price || 0,
+          yes_token: yesToken,
+          no_token: noToken
+        };
+      }
 
-      return {
-        yes_price: parseFloat(yesMidpoint.mid || 0),
-        no_price: parseFloat(noMidpoint.mid || 0),
-        yes_token: yesToken,
-        no_token: noToken
-      };
+      return { yes_price: 0, no_price: 0, yes_token: yesToken, no_token: noToken };
     } catch (error) {
       console.error('Error fetching market prices:', error.message);
-      return { yes_price: 0, no_price: 0 };
+      // Final fallback
+      return {
+        yes_price: market.fallback_yes_price || 0,
+        no_price: market.fallback_no_price || 0,
+        yes_token: market.yes_token_id,
+        no_token: market.no_token_id
+      };
     }
   }
 

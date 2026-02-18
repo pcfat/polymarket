@@ -86,6 +86,9 @@ class TradingEngine {
       for (const market of markets) {
         const prices = await this.polymarket.getMarketPrices(market);
         
+        // Log market prices for debugging
+        console.log(`[Market] ${market.coin}: YES=${prices.yes_price.toFixed(4)} NO=${prices.no_price.toFixed(4)} tokens=[${market.yes_token_id || 'null'}, ${market.no_token_id || 'null'}]`);
+        
         // Store market snapshots
         this.db.insertSnapshot({
           timestamp: Date.now(),

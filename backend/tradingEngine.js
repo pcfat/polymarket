@@ -45,7 +45,7 @@ class TradingEngine {
     try {
       // Perform initial market scan before marking as running
       // This ensures we have markets loaded and reveals any API issues immediately
-      await this.scanMarkets();
+      await this.scanMarkets({ throwOnError: true });
       console.log('✅ Initial market scan completed successfully');
       
       // Only mark as running after successful initial scan
@@ -55,18 +55,24 @@ class TradingEngine {
       // Scan markets every N seconds
       const scanInterval = parseInt(process.env.MARKET_SCAN_INTERVAL) || 30;
       this.marketScanJob = cron.schedule(`*/${scanInterval} * * * * *`, () => {
-        this.scanMarkets();
+        this.scanMarkets().catch(err => {
+          console.error('❌ [Cron] Market scan error:', err.message);
+        });
       });
 
       // Check trading opportunities every N seconds
       const checkInterval = parseInt(process.env.TRADE_CHECK_INTERVAL) || 10;
       this.tradeCheckJob = cron.schedule(`*/${checkInterval} * * * * *`, () => {
-        this.checkTradingOpportunities();
+        this.checkTradingOpportunities().catch(err => {
+          console.error('❌ [Cron] Trade check error:', err.message);
+        });
       });
 
       // Settle paper trades every 30 seconds
       this.settlementJob = cron.schedule('*/30 * * * * *', () => {
-        this.settlePaperTrades();
+        this.settlePaperTrades().catch(err => {
+          console.error('❌ [Cron] Settlement error:', err.message);
+        });
       });
       
       this.emitStatus();
@@ -113,7 +119,7 @@ class TradingEngine {
     console.log('🛑 Trading engine stopped');
   }
 
-  async scanMarkets() {
+  async scanMarkets({ throwOnError = false } = {}) {
     try {
       console.log('🔍 Scanning 15-minute crypto markets...');
       const markets = await this.polymarket.get15MinuteCryptoMarkets();
@@ -197,7 +203,7 @@ class TradingEngine {
         error: error.message,
         timestamp: Date.now()
       });
-      throw error; // Re-throw so start() can catch it
+      if (throwOnError) throw error; // Only throw during start()
     }
   }
 

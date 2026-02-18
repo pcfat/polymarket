@@ -38,47 +38,52 @@ const tradingConfig = {
 io.on('connection', async (socket) => {
   console.log('🔌 Client connected:', socket.id);
 
-  // Send initial status
-  const status = db.getStatus();
-  socket.emit('status', {
-    isRunning: status.is_running === 1,
-    mode: status.mode,
-    lastHeartbeat: status.last_heartbeat,
-    totalTrades: status.total_trades,
-    totalPnl: status.total_pnl
-  });
-
-  // Send initial stats
-  const stats = db.getStats(status.mode);
-  socket.emit('stats', stats);
-
-  // Send recent trades
-  const recentTrades = db.getTrades(10, status.mode);
-  socket.emit('recentTrades', recentTrades);
-
-  // Send markets with prices
-  const markets = engine.getMarkets();
-  const marketsWithPrices = [];
-  
-  // Markets are cached from last scan and include prices
-  for (const market of markets) {
-    marketsWithPrices.push({
-      market_id: market.market_id,
-      question: market.question,
-      coin: market.coin || '',
-      end_date: market.end_date,
-      yes_price: market.yes_price || 0,
-      no_price: market.no_price || 0,
-      volume: market.volume || 0,
-      active: market.active
+  try {
+    // Send initial status
+    const status = db.getStatus();
+    socket.emit('status', {
+      isRunning: status.is_running === 1,
+      mode: status.mode,
+      lastHeartbeat: status.last_heartbeat,
+      totalTrades: status.total_trades,
+      totalPnl: status.total_pnl
     });
+
+    // Send initial stats
+    const stats = db.getStats(status.mode);
+    socket.emit('stats', stats);
+
+    // Send recent trades
+    const recentTrades = db.getTrades(10, status.mode);
+    socket.emit('recentTrades', recentTrades);
+
+    // Send markets with prices
+    const markets = engine.getMarkets();
+    const marketsWithPrices = [];
+    
+    // Markets are cached from last scan and include prices
+    for (const market of markets) {
+      marketsWithPrices.push({
+        market_id: market.market_id,
+        question: market.question,
+        coin: market.coin || '',
+        end_date: market.end_date,
+        yes_price: market.yes_price || 0,
+        no_price: market.no_price || 0,
+        volume: market.volume || 0,
+        active: market.active
+      });
+    }
+    
+    socket.emit('markets', {
+      markets: marketsWithPrices,
+      count: marketsWithPrices.length,
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    console.error('❌ Error in socket connection handler:', error.message);
+    socket.emit('error', { message: 'Server error during connection', error: error.message });
   }
-  
-  socket.emit('markets', {
-    markets: marketsWithPrices,
-    count: marketsWithPrices.length,
-    timestamp: Date.now()
-  });
 
   socket.on('disconnect', () => {
     console.log('🔌 Client disconnected:', socket.id);
@@ -363,9 +368,32 @@ app.get('*', (req, res) => {
   }
 })();
 
+// Global error handlers to prevent silent crashes
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error.message);
+  console.error('Stack trace:', error.stack);
+  // Log but don't crash - allow process to continue
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise);
+  console.error('Reason:', reason);
+  // Log but don't crash - allow process to continue
+});
+
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down gracefully...');
+  if (engine) engine.stop();
+  if (db) db.close();
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n🛑 Received SIGTERM, shutting down gracefully...');
   if (engine) engine.stop();
   if (db) db.close();
   server.close(() => {

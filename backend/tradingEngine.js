@@ -195,6 +195,41 @@ class TradingEngine {
             continue;
           }
 
+          // Odds range filter - skip trades at extreme prices
+          const ODDS_MIN_PRICE = parseFloat(this.config.oddsMinPrice) || 0.30;
+          const ODDS_MAX_PRICE = parseFloat(this.config.oddsMaxPrice) || 0.75;
+          
+          const tokenPrice = analysis.outcome === 'YES' ? prices.yes_price : prices.no_price;
+          
+          if (tokenPrice < ODDS_MIN_PRICE || tokenPrice > ODDS_MAX_PRICE) {
+            console.log(`⚠️ Skipping trade: ${market.coin} ${analysis.outcome} price ${tokenPrice.toFixed(4)} outside range [${ODDS_MIN_PRICE}-${ODDS_MAX_PRICE}]`);
+            this.io.emit('tradeSkipped', {
+              market_id: market.market_id,
+              coin: market.coin,
+              reason: `Price ${tokenPrice.toFixed(4)} outside odds range [${ODDS_MIN_PRICE}-${ODDS_MAX_PRICE}]`,
+              timestamp: Date.now()
+            });
+            continue;
+          }
+
+          // Risk-reward ratio guard
+          const MAX_RISK_REWARD_RATIO = parseFloat(this.config.maxRiskReward) || 5;
+          
+          const potentialGain = (1.0 - tokenPrice); // Max gain per $1 of token
+          const potentialLoss = tokenPrice;          // Max loss per $1 of token
+          const riskRewardRatio = potentialLoss / potentialGain;
+          
+          if (riskRewardRatio > MAX_RISK_REWARD_RATIO) {
+            console.log(`⚠️ Skipping trade: ${market.coin} risk/reward ratio ${riskRewardRatio.toFixed(1)}:1 exceeds max ${MAX_RISK_REWARD_RATIO}:1`);
+            this.io.emit('tradeSkipped', {
+              market_id: market.market_id,
+              coin: market.coin,
+              reason: `Risk/reward ${riskRewardRatio.toFixed(1)}:1 exceeds max ${MAX_RISK_REWARD_RATIO}:1`,
+              timestamp: Date.now()
+            });
+            continue;
+          }
+
           this.processedTrades.add(tradeKey);
           await this.executeTrade(market, analysis.decision, analysis.outcome, prices, mode, analysis);
         }
@@ -208,16 +243,43 @@ class TradingEngine {
 
   async executeTrade(market, side, outcome, prices, mode, analysis) {
     try {
-      let tradeAmount = parseFloat(this.config.tradeAmount) || 10;
-      
-      // Adjust trade amount based on analysis recommendation
-      if (analysis && analysis.tradeAmount === 'increased') {
-        tradeAmount = tradeAmount * 1.5; // 50% increase for high confidence
-      } else if (analysis && analysis.tradeAmount === 'reduced') {
-        tradeAmount = tradeAmount * 0.5; // 50% reduction for low confidence
-      }
+      const baseAmount = parseFloat(this.config.tradeAmount) || 10;
+      const bankroll = parseFloat(this.config.bankroll) || 100;
       
       const price = outcome === 'YES' ? prices.yes_price : prices.no_price;
+      
+      // Half Kelly position sizing
+      // Kelly fraction = (estimated_prob * (odds-1) - (1-estimated_prob)) / (odds-1)
+      // Half Kelly = Kelly / 2 (more conservative)
+      const impliedProb = price; // Market's implied probability
+      const estimatedEdge = Math.abs(analysis.compositeScore); // Our estimated edge
+      const estimatedProb = impliedProb + estimatedEdge; // Our estimated true probability
+      const clampedProb = Math.min(0.95, Math.max(0.05, estimatedProb)); // Clamp to avoid extremes
+      
+      const odds = 1 / price; // Decimal odds
+      const kellyFraction = ((clampedProb * (odds - 1)) - (1 - clampedProb)) / (odds - 1);
+      const halfKelly = Math.max(0, kellyFraction / 2); // Half Kelly, minimum 0
+      
+      let tradeAmount = halfKelly * bankroll;
+      
+      // Apply min/max bounds
+      const MIN_TRADE = 1;   // Minimum $1 trade
+      const MAX_TRADE = baseAmount * 2; // Maximum 2x base amount
+      tradeAmount = Math.min(MAX_TRADE, Math.max(MIN_TRADE, tradeAmount));
+      
+      // If Kelly says don't bet (fraction <= 0), skip the trade
+      if (kellyFraction <= 0) {
+        console.log(`⚠️ Kelly criterion says no edge: fraction=${kellyFraction.toFixed(4)}, skipping trade`);
+        return;
+      }
+      
+      // Adjust based on analysis confidence level
+      if (analysis && analysis.tradeAmount === 'increased') {
+        tradeAmount = Math.min(MAX_TRADE, tradeAmount * 1.3);
+      } else if (analysis && analysis.tradeAmount === 'reduced') {
+        tradeAmount = tradeAmount * 0.5;
+      }
+      
       const shares = price > 0 ? tradeAmount / price : 0;
 
       console.log(`📊 [${mode.toUpperCase()}] Executing trade: ${side} ${outcome} on "${market.question}"`);

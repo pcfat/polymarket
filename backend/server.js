@@ -26,7 +26,11 @@ let db;
 let engine;
 const tradingConfig = {
   tradeAmount: process.env.TRADE_AMOUNT || 10,
-  tradeWindowSeconds: process.env.TRADE_WINDOW_SECONDS || 120
+  tradeWindowSeconds: process.env.TRADE_WINDOW_SECONDS || 120,
+  oddsMinPrice: parseFloat(process.env.ODDS_MIN_PRICE) || 0.30,
+  oddsMaxPrice: parseFloat(process.env.ODDS_MAX_PRICE) || 0.75,
+  maxRiskReward: parseFloat(process.env.MAX_RISK_REWARD) || 5,
+  bankroll: parseFloat(process.env.BANKROLL) || 100
 };
 
 // Socket.IO connection handling
@@ -197,11 +201,15 @@ app.delete('/api/records', (req, res) => {
 // Update strategy configuration
 app.put('/api/config', (req, res) => {
   try {
-    const { tradeAmount, tradeWindowSeconds } = req.body;
+    const { tradeAmount, tradeWindowSeconds, oddsMinPrice, oddsMaxPrice, maxRiskReward, bankroll } = req.body;
     
     const newConfig = {};
     if (tradeAmount !== undefined) newConfig.tradeAmount = parseFloat(tradeAmount);
     if (tradeWindowSeconds !== undefined) newConfig.tradeWindowSeconds = parseInt(tradeWindowSeconds);
+    if (oddsMinPrice !== undefined) newConfig.oddsMinPrice = parseFloat(oddsMinPrice);
+    if (oddsMaxPrice !== undefined) newConfig.oddsMaxPrice = parseFloat(oddsMaxPrice);
+    if (maxRiskReward !== undefined) newConfig.maxRiskReward = parseFloat(maxRiskReward);
+    if (bankroll !== undefined) newConfig.bankroll = parseFloat(bankroll);
 
     Object.assign(tradingConfig, newConfig);
     engine.updateConfig(tradingConfig);

@@ -26,8 +26,6 @@ let db;
 let engine;
 const tradingConfig = {
   tradeAmount: process.env.TRADE_AMOUNT || 10,
-  buyThreshold: process.env.BUY_THRESHOLD || 0.55,
-  sellThreshold: process.env.SELL_THRESHOLD || 0.45,
   tradeWindowSeconds: process.env.TRADE_WINDOW_SECONDS || 120
 };
 
@@ -199,12 +197,10 @@ app.delete('/api/records', (req, res) => {
 // Update strategy configuration
 app.put('/api/config', (req, res) => {
   try {
-    const { tradeAmount, buyThreshold, sellThreshold, tradeWindowSeconds } = req.body;
+    const { tradeAmount, tradeWindowSeconds } = req.body;
     
     const newConfig = {};
     if (tradeAmount !== undefined) newConfig.tradeAmount = parseFloat(tradeAmount);
-    if (buyThreshold !== undefined) newConfig.buyThreshold = parseFloat(buyThreshold);
-    if (sellThreshold !== undefined) newConfig.sellThreshold = parseFloat(sellThreshold);
     if (tradeWindowSeconds !== undefined) newConfig.tradeWindowSeconds = parseInt(tradeWindowSeconds);
 
     Object.assign(tradingConfig, newConfig);

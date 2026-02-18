@@ -192,6 +192,8 @@ class TradingEngine {
         trade.order_id = `PAPER_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
         // Simulate a small random PnL for paper trading
+        // Formula: (random[0-1] - 0.4) * tradeAmount * 0.2
+        // This creates a slight positive bias with small variance
         trade.pnl = (Math.random() - 0.4) * tradeAmount * 0.2;
       } else {
         // Live trading - would integrate with @polymarket/clob-client here

@@ -237,11 +237,12 @@ app.get('*', (req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || 'localhost';
 server.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║  🤖 Polymarket 15分鐘加密貨幣自動交易系統                    ║
-║  🌐 Server running on http://localhost:${PORT}             ║
+║  🌐 Server running on http://${HOST}:${PORT}             ║
 ║  📊 Database: ${dbPath}                                    ║
 ║  🎯 Mode: ${db.getStatus().mode.toUpperCase()}             ║
 ╚═══════════════════════════════════════════════════════════╝

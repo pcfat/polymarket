@@ -31,6 +31,9 @@ const confirmNo = document.getElementById('confirmNo');
 let currentModeValue = 'paper';
 let pendingAction = null;
 
+// Constants
+const MAX_QUESTION_LENGTH = 50;
+
 // Utility Functions
 function formatTimestamp(timestamp) {
     const date = new Date(timestamp);
@@ -97,7 +100,7 @@ socket.on('modeChanged', (data) => {
 });
 
 socket.on('newTrade', (trade) => {
-    addLog(`新交易: ${trade.side} ${trade.outcome} - ${trade.market_question.substring(0, 50)}...`, 'success');
+    addLog(`新交易: ${trade.side} ${trade.outcome} - ${trade.market_question.substring(0, MAX_QUESTION_LENGTH)}...`, 'success');
 });
 
 socket.on('stats', (stats) => {
@@ -193,7 +196,7 @@ function updateTradesTable(trades) {
         <tr>
             <td>${formatTimestamp(trade.timestamp)}</td>
             <td><span class="mode-badge ${trade.mode}">${trade.mode === 'paper' ? '模擬' : '實盤'}</span></td>
-            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${trade.market_question}">${trade.market_question}</td>
+            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${trade.market_question}">${trade.market_question.substring(0, MAX_QUESTION_LENGTH)}...</td>
             <td>${trade.side}</td>
             <td style="color: ${trade.outcome === 'YES' ? 'var(--accent-green)' : 'var(--accent-red)'}">${trade.outcome}</td>
             <td>${trade.price.toFixed(4)}</td>

@@ -1,5 +1,17 @@
 const axios = require('axios');
 
+// Weighting constants for sentiment scoring
+const CRYPTOPANIC_NEWS_WEIGHT = 0.7;    // Weight for CryptoPanic news headlines
+const COINGECKO_PRICE_WEIGHT = 0.5;     // Weight for CoinGecko price momentum (fallback)
+const FEAR_GREED_PRIMARY_WEIGHT = 0.3;  // Weight for F&G when news is available
+const FEAR_GREED_FALLBACK_WEIGHT = 0.5; // Weight for F&G when only price data available
+
+// CryptoPanic sentiment analysis constants
+const VOTE_WEIGHT = 0.6;                // Weight for community votes in CryptoPanic posts
+const KEYWORD_WEIGHT = 0.4;             // Weight for keyword analysis in CryptoPanic posts
+const KEYWORD_NORMALIZATION = 5;        // Divisor to normalize keyword scores to -1 to +1 range
+const RECENCY_DECAY = 0.5;              // Weight decay factor from newest to oldest posts
+
 // Positive keywords for sentiment analysis
 const POSITIVE_WORDS = [
   'surge', 'rally', 'bullish', 'pump', 'soar', 'breakout', 'moon', 'ath',
@@ -84,11 +96,12 @@ async function fetchCryptoPanicNews(coinName) {
   const currency = currencyMap[coinName] || 'BTC';
   
   try {
+    // CryptoPanic free API - no auth token required for public posts
     const response = await axios.get('https://cryptopanic.com/api/free/v1/posts/', {
       params: {
         currencies: currency,
         kind: 'news',
-        public: true
+        public: true  // Access public posts without authentication
       },
       timeout: 5000
     });
@@ -130,14 +143,14 @@ function analyzeCryptoPanicSentiment(posts) {
       const keywordScore = analyzeSentimentText(post.title);
       // Combine: 60% votes, 40% keywords (or 100% keywords if no votes)
       if (post.votes && (post.votes.positive || post.votes.negative || post.votes.liked || post.votes.disliked)) {
-        postScore = postScore * 0.6 + (keywordScore / 5) * 0.4;
+        postScore = postScore * VOTE_WEIGHT + (keywordScore / KEYWORD_NORMALIZATION) * KEYWORD_WEIGHT;
       } else {
-        postScore = keywordScore / 5; // Normalize keyword score to roughly -1 to +1
+        postScore = keywordScore / KEYWORD_NORMALIZATION; // Normalize keyword score to -1 to +1 range
       }
     }
     
-    // Weight by recency (newer posts = higher weight)
-    const weight = 1 - (count / posts.length) * 0.5;
+    // Weight by recency (newer posts = higher weight, 50% decay from newest to oldest)
+    const weight = 1 - (count / posts.length) * RECENCY_DECAY;
     totalScore += postScore * weight;
     count++;
   }
@@ -254,7 +267,7 @@ async function analyzeNewsSentiment(coin) {
     if (posts && posts.length > 0) {
       const newsSentiment = analyzeCryptoPanicSentiment(posts);
       // Combine: 70% news headlines, 30% Fear & Greed
-      const combinedScore = newsSentiment * 0.7 + fearGreedScore * 0.3;
+      const combinedScore = newsSentiment * CRYPTOPANIC_NEWS_WEIGHT + fearGreedScore * FEAR_GREED_PRIMARY_WEIGHT;
       
       return {
         score: combinedScore,
@@ -275,7 +288,7 @@ async function analyzeNewsSentiment(coin) {
     
     if (coingeckoSentiment !== null) {
       // Combine: 50% price momentum, 50% Fear & Greed (less confident without real news)
-      const combinedScore = coingeckoSentiment.score * 0.5 + fearGreedScore * 0.5;
+      const combinedScore = coingeckoSentiment.score * COINGECKO_PRICE_WEIGHT + fearGreedScore * FEAR_GREED_FALLBACK_WEIGHT;
       
       return {
         score: combinedScore,

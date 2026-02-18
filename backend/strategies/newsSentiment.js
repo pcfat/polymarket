@@ -3,12 +3,20 @@ const axios = require('axios');
 // Weighting constants for sentiment scoring
 const NEWS_HEADLINE_WEIGHT = 0.7;       // Weight for news headlines
 const COINGECKO_PRICE_WEIGHT = 0.5;     // Weight for CoinGecko price momentum (fallback)
-const FEAR_GREED_PRIMARY_WEIGHT = 0.3;  // Weight for F&G when news is available
-const FEAR_GREED_FALLBACK_WEIGHT = 0.5; // Weight for F&G when only price data available
+const FEAR_GREED_PRIMARY_WEIGHT = 0.3;  // Weight for F&G when news is available (sums to 1.0 with NEWS_HEADLINE_WEIGHT)
+const FEAR_GREED_FALLBACK_WEIGHT = 0.5; // Weight for F&G when only price data available (sums to 1.0 with COINGECKO_PRICE_WEIGHT)
 
 // News sentiment analysis constants
 const KEYWORD_NORMALIZATION = 5;        // Divisor to normalize keyword scores to -1 to +1 range
 const RECENCY_DECAY = 0.5;              // Weight decay factor from newest to oldest posts
+
+// Coin to ticker symbol mapping for news APIs
+const COIN_TO_TICKER_MAP = {
+  'bitcoin': 'BTC',
+  'ethereum': 'ETH',
+  'solana': 'SOL',
+  'ripple': 'XRP'
+};
 
 // Positive keywords for sentiment analysis
 const POSITIVE_WORDS = [
@@ -85,13 +93,7 @@ function getCoinNameForSearch(coin) {
  * @returns {Array|null} - Array of news articles or null if failed
  */
 async function fetchCryptoNews(coinName) {
-  const coinToTickerMap = {
-    'bitcoin': 'BTC',
-    'ethereum': 'ETH',
-    'solana': 'SOL',
-    'ripple': 'XRP'
-  };
-  const ticker = coinToTickerMap[coinName] || 'BTC';
+  const ticker = COIN_TO_TICKER_MAP[coinName] || 'BTC';
   
   try {
     // CryptoCompare free news API - no auth required for basic access

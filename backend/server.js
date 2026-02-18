@@ -369,14 +369,16 @@ app.get('*', (req, res) => {
 })();
 
 // Global error handlers to prevent silent crashes
+const UNCAUGHT_EXCEPTION_EXIT_DELAY_MS = 1000;
+
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error.message);
   console.error('Stack trace:', error.stack);
   // Uncaught exceptions leave the app in undefined state - must restart
-  console.error('⚠️ Process will exit in 1 second...');
+  console.error(`⚠️ Process will exit in ${UNCAUGHT_EXCEPTION_EXIT_DELAY_MS}ms...`);
   setTimeout(() => {
     process.exit(1);
-  }, 1000);
+  }, UNCAUGHT_EXCEPTION_EXIT_DELAY_MS);
 });
 
 process.on('unhandledRejection', (reason, promise) => {

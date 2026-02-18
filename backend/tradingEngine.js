@@ -24,10 +24,13 @@ class TradingEngine {
     // Settlement constants
     this.RESOLUTION_PRICE_THRESHOLD = 0.95; // Price threshold to determine market resolution
     
+    // Budget allocation constants
+    this.DEFAULT_MAX_EXPOSURE_RATIO = 0.5; // Default maxExposure as 50% of bankroll
+    
     // Set maxExposure: if not provided in config, default to 50% of bankroll
     if (this.config.maxExposure === null || this.config.maxExposure === undefined) {
       const bankroll = parseFloat(this.config.bankroll) || 100;
-      this.config.maxExposure = bankroll * 0.5;
+      this.config.maxExposure = bankroll * this.DEFAULT_MAX_EXPOSURE_RATIO;
     }
   }
 
@@ -254,10 +257,17 @@ class TradingEngine {
 
           // Calculate Kelly-sized trade amount (will be refined in executeTrade)
           // We need to calculate it here to determine priority
-          const kellyAmount = this.calculateKellyAmount(analysis, prices, market);
+          const kellyAmount = this.calculateKellyAmount(analysis, prices);
           
           if (kellyAmount === null || kellyAmount <= 0) {
-            // Trade was filtered out by Kelly logic (will emit tradeSkipped in executeTrade)
+            // Trade was filtered out by Kelly logic, emit tradeSkipped
+            console.log(`⚠️ Kelly criterion filter during collection: ${market.coin} ${analysis.outcome}`);
+            this.io.emit('tradeSkipped', {
+              market_id: market.market_id,
+              coin: market.coin,
+              reason: 'Kelly criterion shows no edge during budget allocation',
+              timestamp: Date.now()
+            });
             continue;
           }
 
@@ -323,7 +333,7 @@ class TradingEngine {
 
   // Helper method to calculate Kelly-sized trade amount
   // Returns null if trade should be skipped, otherwise returns the Kelly amount
-  calculateKellyAmount(analysis, prices, market) {
+  calculateKellyAmount(analysis, prices) {
     const baseAmount = parseFloat(this.config.tradeAmount) || 10;
     const bankroll = parseFloat(this.config.bankroll) || 100;
     const outcome = analysis.outcome;

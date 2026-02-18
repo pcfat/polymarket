@@ -214,6 +214,7 @@ app.put('/api/config', (req, res) => {
     if (maxExposure !== undefined) newConfig.maxExposure = parseFloat(maxExposure);
 
     // If bankroll changed but maxExposure wasn't provided, auto-update maxExposure to 50% of bankroll
+    // This matches the DEFAULT_MAX_EXPOSURE_RATIO constant in TradingEngine
     if (bankroll !== undefined && maxExposure === undefined) {
       newConfig.maxExposure = parseFloat(bankroll) * 0.5;
     }

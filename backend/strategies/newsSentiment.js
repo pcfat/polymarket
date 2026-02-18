@@ -1,5 +1,9 @@
 const axios = require('axios');
 
+// Price change thresholds for sentiment calculation
+const PRICE_CHANGE_1H_THRESHOLD = 2;   // ±2% 1-hour change = ±1 sentiment score
+const PRICE_CHANGE_24H_THRESHOLD = 10; // ±10% 24-hour change = ±1 sentiment score
+
 // Positive keywords for sentiment analysis
 const POSITIVE_WORDS = [
   'surge', 'rally', 'bullish', 'pump', 'soar', 'breakout', 'moon', 'ath',
@@ -102,8 +106,8 @@ async function fetchCryptoSentimentData(coinName) {
     // Convert price changes to sentiment score
     // 1h change is more relevant for 15-minute markets
     let score = 0;
-    score += Math.max(-2, Math.min(2, priceChange1h / 2)); // 1h: ±2% = ±1 score
-    score += Math.max(-1, Math.min(1, priceChange24h / 10)); // 24h: ±10% = ±1 score
+    score += Math.max(-2, Math.min(2, priceChange1h / PRICE_CHANGE_1H_THRESHOLD)); // 1h: ±2% = ±1 score
+    score += Math.max(-1, Math.min(1, priceChange24h / PRICE_CHANGE_24H_THRESHOLD)); // 24h: ±10% = ±1 score
     
     return {
       score: Math.max(-1, Math.min(1, score / 3)),

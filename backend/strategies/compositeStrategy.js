@@ -10,6 +10,17 @@ const DEFAULT_WEIGHTS = {
 };
 
 /**
+ * Check if a strategy analysis succeeded
+ * @param {Object} result - Result from Promise.allSettled
+ * @returns {boolean} - True if strategy succeeded without error
+ */
+function isStrategySuccessful(result) {
+  return result.status === 'fulfilled' && 
+         result.value.score !== undefined && 
+         !result.value.error;
+}
+
+/**
  * Main composite market analysis function
  * Combines technical analysis, news sentiment, and order flow analysis
  * 
@@ -46,40 +57,30 @@ async function analyzeMarket(coin, yesTokenId, noTokenId, weights = DEFAULT_WEIG
     // Dynamic weight redistribution when strategies fail
     // Determine which strategies succeeded (no error and returned valid score)
     const successfulStrategies = [];
-    if (technical.status === 'fulfilled' && technical.value.score !== undefined && !technical.value.error) {
+    if (isStrategySuccessful(technical)) {
       successfulStrategies.push({ name: 'technical', score: taScore, weight: weights.technical });
     }
-    if (news.status === 'fulfilled' && news.value.score !== undefined && !news.value.error) {
+    if (isStrategySuccessful(news)) {
       successfulStrategies.push({ name: 'news', score: newsScore, weight: weights.news });
     }
-    if (orderFlow.status === 'fulfilled' && orderFlow.value.score !== undefined && !orderFlow.value.error) {
+    if (isStrategySuccessful(orderFlow)) {
       successfulStrategies.push({ name: 'orderFlow', score: ofScore, weight: weights.orderFlow });
     }
 
     // Redistribute weights from failed strategies to successful ones
-    let adjustedWeights = { ...weights };
-    if (successfulStrategies.length > 0 && successfulStrategies.length < 3) {
+    let adjustedWeights = { technical: 0, news: 0, orderFlow: 0 };
+    
+    if (successfulStrategies.length > 0) {
       // Calculate total weight of successful strategies
       const successfulWeight = successfulStrategies.reduce((sum, s) => sum + s.weight, 0);
       
-      // Redistribute weights proportionally
+      // Redistribute weights proportionally among successful strategies
       successfulStrategies.forEach(s => {
         adjustedWeights[s.name] = s.weight / successfulWeight;
       });
-      
-      // Set failed strategies to 0
-      if (technical.status !== 'fulfilled' || technical.value.score === undefined || technical.value.error) {
-        adjustedWeights.technical = 0;
-      }
-      if (news.status !== 'fulfilled' || news.value.score === undefined || news.value.error) {
-        adjustedWeights.news = 0;
-      }
-      if (orderFlow.status !== 'fulfilled' || orderFlow.value.score === undefined || orderFlow.value.error) {
-        adjustedWeights.orderFlow = 0;
-      }
-    } else if (successfulStrategies.length === 0) {
+    } else {
       // No strategies succeeded - use original weights (will result in 0 score)
-      adjustedWeights = weights;
+      adjustedWeights = { ...weights };
     }
 
     // Calculate composite score with adjusted weights

@@ -279,6 +279,19 @@ class DatabaseManager {
     return snapshots;
   }
 
+  // Get unsettled paper trades
+  getUnsettledPaperTrades() {
+    const stmt = this.db.prepare(
+      "SELECT * FROM trades WHERE mode = 'paper' AND status = 'filled' AND pnl = 0"
+    );
+    const trades = [];
+    while (stmt.step()) {
+      trades.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return trades;
+  }
+
   // Statistics Operations
   getStats(mode = null) {
     let query = 'SELECT COUNT(*) as total_trades, SUM(pnl) as total_pnl, AVG(pnl) as avg_pnl FROM trades';

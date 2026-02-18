@@ -16,6 +16,7 @@ class TradingEngine {
     this.markets = [];
     this.marketScanJob = null;
     this.tradeCheckJob = null;
+    this.settlementJob = null;
     this.processedTrades = new Set(); // Track processed market+outcome combinations
     this.strategyWeights = DEFAULT_WEIGHTS; // Strategy weights for composite analysis
     this.latestAnalysis = {}; // Store latest analysis for each market
@@ -44,6 +45,11 @@ class TradingEngine {
       this.checkTradingOpportunities();
     });
 
+    // Settle paper trades every 30 seconds
+    this.settlementJob = cron.schedule('*/30 * * * * *', () => {
+      this.settlePaperTrades();
+    });
+
     // Initial scan
     this.scanMarkets();
     
@@ -68,6 +74,11 @@ class TradingEngine {
     if (this.tradeCheckJob) {
       this.tradeCheckJob.stop();
       this.tradeCheckJob = null;
+    }
+
+    if (this.settlementJob) {
+      this.settlementJob.stop();
+      this.settlementJob = null;
     }
 
     this.emitStatus();
@@ -211,10 +222,12 @@ class TradingEngine {
         console.log(`   📈 Composite Score: ${analysis.compositeScore.toFixed(3)}, Confidence: ${(analysis.confidence * 100).toFixed(1)}%`);
       }
 
-      // Create analysis summary for notes
+      // Create analysis summary for notes with settlement info
       let analysisNotes = '';
       if (analysis) {
         analysisNotes = JSON.stringify({
+          end_date: market.end_date,
+          slug: market.slug,
           compositeScore: analysis.compositeScore,
           confidence: analysis.confidence,
           decision: analysis.decision,
@@ -228,6 +241,12 @@ class TradingEngine {
             }
           },
           weights: analysis.weights
+        });
+      } else {
+        // Even without analysis, store settlement info for paper trades
+        analysisNotes = JSON.stringify({
+          end_date: market.end_date,
+          slug: market.slug
         });
       }
 
@@ -246,14 +265,10 @@ class TradingEngine {
       };
 
       if (mode === 'paper') {
-        // Paper trading - simulate immediate fill
+        // Paper trading - mark as filled with pending settlement
         trade.status = 'filled';
         trade.order_id = `PAPER_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        // Simulate a small random PnL for paper trading
-        // Formula: (random[0-1] - 0.4) * tradeAmount * 0.2
-        // This creates a slight positive bias with small variance
-        trade.pnl = (Math.random() - 0.4) * tradeAmount * 0.2;
+        trade.pnl = 0; // Will be settled after market expiration
       } else {
         // Live trading - would integrate with @polymarket/clob-client here
         trade.notes += ' | Live trading not implemented - placeholder';
@@ -282,6 +297,136 @@ class TradingEngine {
     } catch (error) {
       console.error('❌ Error executing trade:', error.message);
       this.io.emit('error', { message: 'Failed to execute trade', error: error.message });
+    }
+  }
+
+  updateConfig(newConfig) {
+    this.config = { ...this.config, ...newConfig };
+    console.log('⚙️ Configuration updated:', this.config);
+  }
+
+  // Helper function to determine market winner from Gamma API response
+  getMarketWinner(marketData) {
+    if (!marketData) return null;
+    const market = Array.isArray(marketData) ? marketData[0] : marketData;
+    
+    // Check outcomePrices (most reliable — settled to [1,0] or [0,1])
+    let prices = market.outcomePrices;
+    if (typeof prices === 'string') {
+      try { 
+        prices = JSON.parse(prices); 
+      } catch(e) { 
+        prices = null; 
+      }
+    }
+    if (Array.isArray(prices) && prices.length >= 2) {
+      const yesPrice = parseFloat(prices[0]);
+      const noPrice = parseFloat(prices[1]);
+      if (yesPrice >= 0.95) return 'YES';
+      if (noPrice >= 0.95) return 'NO';
+    }
+    
+    // Check closed/resolved status
+    if (market.closed || market.resolved) {
+      if (market.winning_side) return market.winning_side.toUpperCase();
+      if (market.resolution) return market.resolution.toUpperCase();
+    }
+    
+    return null; // Not yet resolved
+  }
+
+  // Settle paper trades after market expiration
+  async settlePaperTrades() {
+    if (!this.isRunning) return;
+
+    try {
+      const unsettledTrades = this.db.getUnsettledPaperTrades();
+      
+      if (unsettledTrades.length === 0) {
+        return;
+      }
+
+      console.log(`🔍 Checking ${unsettledTrades.length} unsettled paper trades...`);
+
+      for (const trade of unsettledTrades) {
+        try {
+          // Parse notes to get settlement info
+          let settlementInfo = {};
+          if (trade.notes) {
+            try {
+              settlementInfo = JSON.parse(trade.notes);
+            } catch (e) {
+              console.error(`Failed to parse notes for trade ${trade.id}`);
+              continue;
+            }
+          }
+
+          const endDate = settlementInfo.end_date;
+          const slug = settlementInfo.slug;
+
+          if (!endDate || !slug) {
+            console.log(`⚠️ Trade ${trade.id} missing settlement info, skipping`);
+            continue;
+          }
+
+          // Check if market has expired
+          const now = Date.now();
+          if (now <= endDate) {
+            // Market not yet expired
+            continue;
+          }
+
+          console.log(`📊 Settling trade ${trade.id} for market ${slug}...`);
+
+          // Query Gamma API for market resolution
+          const marketData = await this.polymarket.getMarketBySlug(slug);
+          const winner = this.getMarketWinner(marketData);
+
+          if (!winner) {
+            console.log(`⏳ Market ${slug} not yet resolved, will retry later`);
+            continue;
+          }
+
+          console.log(`✅ Market ${slug} resolved: winner = ${winner}`);
+
+          // Calculate PnL based on outcome
+          let calculatedPnl;
+          if (trade.outcome === winner) {
+            // Win: (shares × 1.0) - amount
+            calculatedPnl = (trade.shares * 1.0) - trade.amount;
+          } else {
+            // Loss: -amount
+            calculatedPnl = -trade.amount;
+          }
+
+          console.log(`💰 Trade ${trade.id}: outcome=${trade.outcome}, winner=${winner}, PnL=${calculatedPnl.toFixed(2)}`);
+
+          // Update trade in database
+          this.db.updateTrade(trade.id, { pnl: calculatedPnl });
+
+          // Update stats
+          const stats = this.db.getStats('paper');
+          this.db.updateStatus({ 
+            total_trades: stats.total_trades,
+            total_pnl: stats.total_pnl
+          });
+
+          // Emit updates to frontend
+          const updatedTrade = this.db.getTradeById(trade.id);
+          this.io.emit('tradeSettled', updatedTrade);
+          this.io.emit('stats', stats);
+          
+          // Emit recent trades
+          const recentTrades = this.db.getTrades(10, 'paper');
+          this.io.emit('recentTrades', recentTrades);
+
+          console.log(`✅ Trade ${trade.id} settled successfully`);
+        } catch (error) {
+          console.error(`❌ Error settling trade ${trade.id}:`, error.message);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error in settlePaperTrades:', error.message);
     }
   }
 

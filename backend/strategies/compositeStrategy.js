@@ -43,11 +43,50 @@ async function analyzeMarket(coin, yesTokenId, noTokenId, weights = DEFAULT_WEIG
     const ofScore = orderFlow.status === 'fulfilled' ? orderFlow.value.score : 0;
     const ofConfidence = orderFlow.status === 'fulfilled' ? orderFlow.value.confidence : 0;
 
-    // Calculate composite score
+    // Dynamic weight redistribution when strategies fail
+    // Determine which strategies succeeded (no error and returned valid score)
+    const successfulStrategies = [];
+    if (technical.status === 'fulfilled' && technical.value.score !== undefined && !technical.value.error) {
+      successfulStrategies.push({ name: 'technical', score: taScore, weight: weights.technical });
+    }
+    if (news.status === 'fulfilled' && news.value.score !== undefined && !news.value.error) {
+      successfulStrategies.push({ name: 'news', score: newsScore, weight: weights.news });
+    }
+    if (orderFlow.status === 'fulfilled' && orderFlow.value.score !== undefined && !orderFlow.value.error) {
+      successfulStrategies.push({ name: 'orderFlow', score: ofScore, weight: weights.orderFlow });
+    }
+
+    // Redistribute weights from failed strategies to successful ones
+    let adjustedWeights = { ...weights };
+    if (successfulStrategies.length > 0 && successfulStrategies.length < 3) {
+      // Calculate total weight of successful strategies
+      const successfulWeight = successfulStrategies.reduce((sum, s) => sum + s.weight, 0);
+      
+      // Redistribute weights proportionally
+      successfulStrategies.forEach(s => {
+        adjustedWeights[s.name] = s.weight / successfulWeight;
+      });
+      
+      // Set failed strategies to 0
+      if (technical.status !== 'fulfilled' || technical.value.score === undefined || technical.value.error) {
+        adjustedWeights.technical = 0;
+      }
+      if (news.status !== 'fulfilled' || news.value.score === undefined || news.value.error) {
+        adjustedWeights.news = 0;
+      }
+      if (orderFlow.status !== 'fulfilled' || orderFlow.value.score === undefined || orderFlow.value.error) {
+        adjustedWeights.orderFlow = 0;
+      }
+    } else if (successfulStrategies.length === 0) {
+      // No strategies succeeded - use original weights (will result in 0 score)
+      adjustedWeights = weights;
+    }
+
+    // Calculate composite score with adjusted weights
     const compositeScore = 
-      taScore * weights.technical +
-      newsScore * weights.news +
-      ofScore * weights.orderFlow;
+      taScore * adjustedWeights.technical +
+      newsScore * adjustedWeights.news +
+      ofScore * adjustedWeights.orderFlow;
 
     // Determine confidence (0-1) based on agreement between signals
     const signals = [taScore, newsScore, ofScore];
@@ -134,7 +173,8 @@ async function analyzeMarket(coin, yesTokenId, noTokenId, weights = DEFAULT_WEIG
           details: {}
         }
       },
-      weights
+      weights: adjustedWeights,
+      originalWeights: weights
     };
   } catch (error) {
     console.error('Composite market analysis error:', error.message);

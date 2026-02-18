@@ -70,21 +70,53 @@ function getCoinNameForSearch(coin) {
 }
 
 /**
- * Fetch crypto news from Speraxos API
+ * Fetch crypto sentiment data from CoinGecko as proxy for news sentiment
+ * Uses price change percentages as market sentiment indicator
  * @param {string} coinName - Coin name to search (e.g., 'bitcoin')
- * @returns {Array} - Array of news articles
+ * @returns {Object|null} - { score, details } or null if failed
  */
-async function fetchCryptoNews(coinName) {
+async function fetchCryptoSentimentData(coinName) {
+  const coinIdMap = { 
+    'bitcoin': 'bitcoin', 
+    'ethereum': 'ethereum', 
+    'solana': 'solana', 
+    'ripple': 'ripple' 
+  };
+  const coinId = coinIdMap[coinName] || 'bitcoin';
+  
   try {
-    const response = await axios.get(`https://free-crypto-news.vercel.app/api/search`, {
-      params: { q: coinName },
+    const response = await axios.get(`https://api.coingecko.com/api/v3/coins/${coinId}`, {
+      params: { 
+        localization: false, 
+        tickers: false, 
+        community_data: false, 
+        developer_data: false 
+      },
       timeout: 5000
     });
     
-    return response.data?.articles || [];
+    const data = response.data;
+    const priceChange24h = data.market_data?.price_change_percentage_24h || 0;
+    const priceChange1h = data.market_data?.price_change_percentage_1h_in_currency?.usd || 0;
+    
+    // Convert price changes to sentiment score
+    // 1h change is more relevant for 15-minute markets
+    let score = 0;
+    score += Math.max(-2, Math.min(2, priceChange1h / 2)); // 1h: ±2% = ±1 score
+    score += Math.max(-1, Math.min(1, priceChange24h / 10)); // 24h: ±10% = ±1 score
+    
+    return {
+      score: Math.max(-1, Math.min(1, score / 3)),
+      details: {
+        coin: coinName,
+        priceChange1h,
+        priceChange24h,
+        source: 'coingecko'
+      }
+    };
   } catch (error) {
-    console.error(`Error fetching news for ${coinName}:`, error.message);
-    return [];
+    console.error(`Error fetching CoinGecko data for ${coinName}:`, error.message);
+    return null; // Will fall back to Fear & Greed only
   }
 }
 
@@ -135,58 +167,47 @@ async function analyzeNewsSentiment(coin) {
   try {
     const coinName = getCoinNameForSearch(coin);
     
-    // Fetch news and Fear & Greed Index in parallel
-    const [articles, fearGreed] = await Promise.all([
-      fetchCryptoNews(coinName),
+    // Fetch CoinGecko sentiment data and Fear & Greed Index in parallel
+    const [sentimentData, fearGreed] = await Promise.all([
+      fetchCryptoSentimentData(coinName),
       fetchFearGreedIndex()
     ]);
-    
-    // Analyze sentiment of each article
-    let totalSentiment = 0;
-    let articleCount = 0;
-    
-    // Weight more recent articles higher
-    const now = Date.now();
-    const maxArticles = Math.min(articles.length, 20); // Limit to 20 most recent
-    
-    for (let i = 0; i < maxArticles; i++) {
-      const article = articles[i];
-      const title = article.title || '';
-      const description = article.description || '';
-      const text = `${title} ${description}`;
-      
-      const sentiment = analyzeSentimentText(text);
-      
-      // Weight based on recency (newer = higher weight)
-      const weight = 1 - (i / maxArticles) * 0.5; // 1.0 to 0.5
-      totalSentiment += sentiment * weight;
-      articleCount++;
-    }
-    
-    // Calculate average news sentiment
-    const avgNewsSentiment = articleCount > 0 ? totalSentiment / articleCount : 0;
-    
-    // Normalize news sentiment to -1 to 1 range
-    // Typical sentiment scores range from -5 to +5 based on keyword matching
-    // We divide by 5 to normalize to the [-1, 1] scale used by other strategies
-    const normalizedNewsSentiment = Math.max(-1, Math.min(1, avgNewsSentiment / 5));
     
     // Convert Fear & Greed to score
     const fearGreedScore = fearGreedToScore(fearGreed.value);
     
-    // Combine: 70% news, 30% Fear & Greed
-    const combinedScore = normalizedNewsSentiment * 0.7 + fearGreedScore * 0.3;
+    let combinedScore;
+    let details;
+    
+    if (sentimentData) {
+      // Combine: 70% market sentiment (from CoinGecko), 30% Fear & Greed
+      combinedScore = sentimentData.score * 0.7 + fearGreedScore * 0.3;
+      
+      details = {
+        coin: coinName,
+        marketSentiment: sentimentData.score,
+        priceChange1h: sentimentData.details.priceChange1h,
+        priceChange24h: sentimentData.details.priceChange24h,
+        fearGreedIndex: fearGreed.value,
+        fearGreedLabel: fearGreed.classification,
+        source: 'coingecko+feargreed'
+      };
+    } else {
+      // Fallback: use Fear & Greed Index alone if CoinGecko fails
+      combinedScore = fearGreedScore;
+      
+      details = {
+        coin: coinName,
+        fearGreedIndex: fearGreed.value,
+        fearGreedLabel: fearGreed.classification,
+        source: 'feargreed_only',
+        note: 'CoinGecko data unavailable, using Fear & Greed Index only'
+      };
+    }
     
     return {
       score: combinedScore,
-      details: {
-        coin: coinName,
-        newsCount: articleCount,
-        avgSentiment: normalizedNewsSentiment,
-        fearGreedIndex: fearGreed.value,
-        fearGreedLabel: fearGreed.classification,
-        recentHeadlines: articles.slice(0, 5).map(a => a.title)
-      }
+      details
     };
   } catch (error) {
     console.error('News sentiment analysis error:', error.message);

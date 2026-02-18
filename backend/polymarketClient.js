@@ -137,8 +137,8 @@ class PolymarketClient {
       active: market.active !== false,
       volume: parseFloat(market.volume || 0),
       // Include fallback prices from Gamma API
-      fallback_yes_price: Array.isArray(outcomePrices) && outcomePrices.length >= 1 ? parseFloat(outcomePrices[0]) : null,
-      fallback_no_price: Array.isArray(outcomePrices) && outcomePrices.length >= 2 ? parseFloat(outcomePrices[1]) : null
+      fallback_yes_price: Array.isArray(outcomePrices) && outcomePrices.length >= 1 ? (parseFloat(outcomePrices[0]) || 0) : null,
+      fallback_no_price: Array.isArray(outcomePrices) && outcomePrices.length >= 2 ? (parseFloat(outcomePrices[1]) || 0) : null
     };
   }
 

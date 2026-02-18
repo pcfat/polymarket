@@ -33,7 +33,7 @@ const NEGATIVE_WORDS = [
 /**
  * Analyze sentiment of text using keyword matching
  * @param {string} text - Text to analyze
- * @returns {number} - Sentiment score (positive or negative)
+ * @returns {number} - Sentiment score (unbounded, typically -5 to +5 range based on keyword matches)
  */
 function analyzeSentimentText(text) {
   if (!text) return 0;
@@ -148,6 +148,8 @@ function analyzeCryptoPanicSentiment(posts) {
       } else {
         postScore = keywordScore / KEYWORD_NORMALIZATION; // Normalize keyword score to -1 to +1 range
       }
+      // Clamp to ensure postScore stays within valid range
+      postScore = Math.max(-1, Math.min(1, postScore));
     }
     
     // Weight by recency (newer posts = higher weight, 50% decay from newest to oldest)

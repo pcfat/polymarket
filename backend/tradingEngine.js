@@ -20,6 +20,9 @@ class TradingEngine {
     this.processedTrades = new Set(); // Track processed market+outcome combinations
     this.strategyWeights = DEFAULT_WEIGHTS; // Strategy weights for composite analysis
     this.latestAnalysis = {}; // Store latest analysis for each market
+    
+    // Settlement constants
+    this.RESOLUTION_PRICE_THRESHOLD = 0.95; // Price threshold to determine market resolution
   }
 
   start() {
@@ -322,8 +325,8 @@ class TradingEngine {
     if (Array.isArray(prices) && prices.length >= 2) {
       const yesPrice = parseFloat(prices[0]);
       const noPrice = parseFloat(prices[1]);
-      if (yesPrice >= 0.95) return 'YES';
-      if (noPrice >= 0.95) return 'NO';
+      if (yesPrice >= this.RESOLUTION_PRICE_THRESHOLD) return 'YES';
+      if (noPrice >= this.RESOLUTION_PRICE_THRESHOLD) return 'NO';
     }
     
     // Check closed/resolved status
@@ -392,10 +395,10 @@ class TradingEngine {
           // Calculate PnL based on outcome
           let calculatedPnl;
           if (trade.outcome === winner) {
-            // Win: (shares × 1.0) - amount
-            calculatedPnl = (trade.shares * 1.0) - trade.amount;
+            // Win: shares - amount (shares settle at $1.00 each)
+            calculatedPnl = trade.shares - trade.amount;
           } else {
-            // Loss: -amount
+            // Loss: -amount (complete loss of investment)
             calculatedPnl = -trade.amount;
           }
 

@@ -153,6 +153,10 @@ class TradingEngine {
       const bankroll = parseFloat(this.config.bankroll) || 100;
       const maxExposure = parseFloat(this.config.maxExposure) || 0.5;
 
+      // Constants
+      const MIN_REMAINING_BUDGET = 1;
+      const MIN_TRADE = 1;
+
       // ===== Phase 1: Collect all candidates that pass filters =====
       const candidates = [];
 
@@ -190,9 +194,9 @@ class TradingEngine {
         const oddsMin = parseFloat(this.config.oddsMinPrice) || 0.30;
         const oddsMax = parseFloat(this.config.oddsMaxPrice) || 0.75;
         if (tokenPrice < oddsMin || tokenPrice > oddsMax) {
-          console.log(`⚠️ Skipping: ${market.coin} price ${tokenPrice.toFixed(4)} outside [${oddsMin}-${oddsMax}]`);
+          console.log(`⚠️ Skipping: ${market.question} price ${tokenPrice.toFixed(4)} outside [${oddsMin}-${oddsMax}]`);
           this.io.emit('tradeSkipped', {
-            market_id: market.market_id, coin: market.coin,
+            market_id: market.market_id, coin: market.question,
             reason: `價格 ${tokenPrice.toFixed(4)} 超出範圍 [${oddsMin}-${oddsMax}]`,
             timestamp: Date.now()
           });
@@ -204,9 +208,9 @@ class TradingEngine {
         const potentialGain = 1.0 - tokenPrice;
         const riskRewardRatio = potentialGain > 0 ? tokenPrice / potentialGain : Infinity;
         if (riskRewardRatio > maxRR) {
-          console.log(`⚠️ Skipping: ${market.coin} R/R ${riskRewardRatio.toFixed(1)}:1 > max ${maxRR}:1`);
+          console.log(`⚠️ Skipping: ${market.question} R/R ${riskRewardRatio.toFixed(1)}:1 > max ${maxRR}:1`);
           this.io.emit('tradeSkipped', {
-            market_id: market.market_id, coin: market.coin,
+            market_id: market.market_id, coin: market.question,
             reason: `風險回報比 ${riskRewardRatio.toFixed(1)}:1 超過上限 ${maxRR}:1`,
             timestamp: Date.now()
           });
@@ -221,9 +225,9 @@ class TradingEngine {
         const halfKelly = Math.max(0, kellyFraction / 2);
 
         if (halfKelly <= 0) {
-          console.log(`⚠️ Skipping: ${market.coin} Kelly says no edge (f=${kellyFraction.toFixed(4)})`);
+          console.log(`⚠️ Skipping: ${market.question} Kelly says no edge (f=${kellyFraction.toFixed(4)})`);
           this.io.emit('tradeSkipped', {
-            market_id: market.market_id, coin: market.coin,
+            market_id: market.market_id, coin: market.question,
             reason: `Kelly 無 edge (f=${kellyFraction.toFixed(4)})`,
             timestamp: Date.now()
           });
@@ -245,11 +249,11 @@ class TradingEngine {
 
       for (const candidate of candidates) {
         const remainingBudget = totalBudget - usedBudget;
-        if (remainingBudget <= 1) {
+        if (remainingBudget <= MIN_REMAINING_BUDGET) {
           console.log(`⚠️ Budget exhausted ($${usedBudget.toFixed(2)}/$${totalBudget.toFixed(2)}), skipping remaining`);
           this.io.emit('tradeSkipped', {
             market_id: candidate.market.market_id,
-            coin: candidate.market.coin,
+            coin: candidate.market.question,
             reason: `併發預算已用盡 ($${usedBudget.toFixed(2)}/$${totalBudget.toFixed(2)})`,
             timestamp: Date.now()
           });
@@ -262,7 +266,6 @@ class TradingEngine {
         // Apply min/max bounds
         const baseAmount = parseFloat(this.config.tradeAmount) || 10;
         const MAX_TRADE = baseAmount * 2;
-        const MIN_TRADE = 1;
         tradeAmount = Math.min(MAX_TRADE, Math.max(MIN_TRADE, tradeAmount));
 
         // Cap to remaining budget

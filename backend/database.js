@@ -92,13 +92,12 @@ class DatabaseManager {
   // Bot Status Operations
   getStatus() {
     const stmt = this.db.prepare('SELECT * FROM bot_status WHERE id = 1');
+    let result = null;
     if (stmt.step()) {
-      const result = stmt.getAsObject();
-      stmt.free();
-      return result;
+      result = stmt.getAsObject();
     }
     stmt.free();
-    return null;
+    return result;
   }
 
   updateStatus(updates) {
@@ -154,14 +153,17 @@ class DatabaseManager {
       trade.notes || null
     ]);
     
+    // Get last insert ID BEFORE saveToFile (which calls export and resets last_insert_rowid)
+    const stmt = this.db.prepare('SELECT last_insert_rowid() as id');
+    let lastId = 0;
+    if (stmt.step()) {
+      lastId = stmt.getAsObject().id;
+    }
+    stmt.free();
+    
     this.saveToFile();
     
-    // Get last insert ID
-    const stmt = this.db.prepare('SELECT last_insert_rowid() as id');
-    stmt.step();
-    const result = stmt.getAsObject();
-    stmt.free();
-    return result.id;
+    return lastId;
   }
 
   getTrades(limit = 100, mode = null) {
@@ -192,13 +194,12 @@ class DatabaseManager {
     const stmt = this.db.prepare('SELECT * FROM trades WHERE id = ?');
     stmt.bind([id]);
     
+    let result = null;
     if (stmt.step()) {
-      const result = stmt.getAsObject();
-      stmt.free();
-      return result;
+      result = stmt.getAsObject();
     }
     stmt.free();
-    return null;
+    return result;
   }
 
   updateTrade(id, updates) {
@@ -252,14 +253,17 @@ class DatabaseManager {
       snapshot.liquidity || 0
     ]);
     
+    // Get last insert ID BEFORE saveToFile (which calls export and resets last_insert_rowid)
+    const stmt = this.db.prepare('SELECT last_insert_rowid() as id');
+    let lastId = 0;
+    if (stmt.step()) {
+      lastId = stmt.getAsObject().id;
+    }
+    stmt.free();
+    
     this.saveToFile();
     
-    // Get last insert ID
-    const stmt = this.db.prepare('SELECT last_insert_rowid() as id');
-    stmt.step();
-    const result = stmt.getAsObject();
-    stmt.free();
-    return result.id;
+    return lastId;
   }
 
   getSnapshots(limit = 200) {

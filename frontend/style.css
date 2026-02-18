@@ -620,3 +620,191 @@ tr:hover {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--hover-bg);
 }
+
+/* Config Divider */
+.config-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 20px 0;
+}
+
+/* Strategy Analysis Section */
+.analysis-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.analysis-section h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+}
+
+.analysis-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 16px;
+}
+
+.analysis-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 16px;
+}
+
+.analysis-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.analysis-header h4 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent-blue);
+}
+
+.decision-badge {
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.decision-badge.decision-hold {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.decision-badge.decision-buy {
+    background: var(--accent-green);
+    color: white;
+}
+
+.signal-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.signal-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.signal-item label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.score-bar-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.score-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--bg-primary);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+}
+
+.score-fill {
+    position: absolute;
+    left: 50%;
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-red) 0%, var(--accent-yellow) 50%, var(--accent-green) 100%);
+    transition: width 0.3s ease, transform 0.3s ease;
+}
+
+/* Calculate score fill based on CSS variable --score (-1 to 1) */
+.score-bar {
+    --score-abs: max(calc(var(--score) * -1), var(--score));
+    --score-width: calc(var(--score-abs) * 50%);
+}
+
+.score-bar .score-fill {
+    width: var(--score-width);
+}
+
+/* Positive scores (right side) */
+.score-bar[style*="--score: 0"] .score-fill,
+.score-bar[style*="--score: 1"] .score-fill {
+    transform: translateX(0);
+}
+
+/* Negative scores (left side) */
+.score-bar[style*="--score: -"] .score-fill {
+    transform: translateX(-100%);
+}
+
+.score-value {
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 40px;
+    text-align: right;
+}
+
+.composite-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.composite-score {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+}
+
+.composite-score strong {
+    font-size: 16px;
+}
+
+.confidence-meter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+}
+
+.confidence-bar {
+    flex: 1;
+    height: 6px;
+    background: var(--bg-primary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.confidence-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-red), var(--accent-yellow), var(--accent-green));
+    transition: width 0.3s ease;
+}
+
+.confidence-meter strong {
+    min-width: 40px;
+    text-align: right;
+}
+
+/* Responsive adjustments for analysis section */
+@media (max-width: 768px) {
+    .analysis-grid {
+        grid-template-columns: 1fr;
+    }
+}

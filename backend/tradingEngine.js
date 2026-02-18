@@ -150,54 +150,150 @@ class TradingEngine {
       const status = this.db.getStatus();
       const mode = status.mode;
       const tradeWindowSeconds = parseInt(this.config.tradeWindowSeconds) || 120;
+      const bankroll = parseFloat(this.config.bankroll) || 100;
+      const maxExposure = parseFloat(this.config.maxExposure) || 0.5;
+
+      // ===== Phase 1: Collect all candidates that pass filters =====
+      const candidates = [];
 
       for (const market of this.markets) {
-        // Check if market is within trading window
         if (!this.polymarket.isInTradingWindow(market.end_date, tradeWindowSeconds)) {
           continue;
         }
 
-        // Get current prices to extract token IDs
         const prices = await this.polymarket.getMarketPrices(market);
         const yesTokenId = prices.yes_token || market.tokens?.[0]?.token_id;
         const noTokenId = prices.no_token || market.tokens?.[1]?.token_id;
 
-        // Run composite strategy analysis
         const analysis = await analyzeMarket(
-          market.question, // Pass the question which contains coin info
-          yesTokenId,
-          noTokenId,
-          this.strategyWeights
+          market.question, yesTokenId, noTokenId, this.strategyWeights
         );
 
-        // Store latest analysis for this market
+        // Store & emit analysis (unchanged)
         this.latestAnalysis[market.market_id] = {
-          ...analysis,
-          market_id: market.market_id,
-          coin: market.question,
-          timestamp: Date.now()
+          ...analysis, market_id: market.market_id,
+          coin: market.question, timestamp: Date.now()
         };
-
-        // Emit analysis data to frontend via Socket.IO
         this.io.emit('analysis', {
-          market_id: market.market_id,
-          coin: market.question,
-          ...analysis,
-          timestamp: Date.now()
+          market_id: market.market_id, coin: market.question,
+          ...analysis, timestamp: Date.now()
         });
 
-        // Use analysis decision to determine trades
-        if (analysis.decision === 'BUY' && analysis.outcome) {
-          const tradeKey = `${market.market_id}_${analysis.outcome}`;
-          
-          // Avoid duplicate trades for the same market+outcome
-          if (this.processedTrades.has(tradeKey)) {
-            continue;
-          }
+        if (analysis.decision !== 'BUY' || !analysis.outcome) continue;
 
-          this.processedTrades.add(tradeKey);
-          await this.executeTrade(market, analysis.decision, analysis.outcome, prices, mode, analysis);
+        const tradeKey = `${market.market_id}_${analysis.outcome}`;
+        if (this.processedTrades.has(tradeKey)) continue;
+
+        const tokenPrice = analysis.outcome === 'YES' ? prices.yes_price : prices.no_price;
+
+        // --- Odds range filter ---
+        const oddsMin = parseFloat(this.config.oddsMinPrice) || 0.30;
+        const oddsMax = parseFloat(this.config.oddsMaxPrice) || 0.75;
+        if (tokenPrice < oddsMin || tokenPrice > oddsMax) {
+          console.log(`⚠️ Skipping: ${market.coin} price ${tokenPrice.toFixed(4)} outside [${oddsMin}-${oddsMax}]`);
+          this.io.emit('tradeSkipped', {
+            market_id: market.market_id, coin: market.coin,
+            reason: `價格 ${tokenPrice.toFixed(4)} 超出範圍 [${oddsMin}-${oddsMax}]`,
+            timestamp: Date.now()
+          });
+          continue;
         }
+
+        // --- Risk-reward ratio filter ---
+        const maxRR = parseFloat(this.config.maxRiskReward) || 5;
+        const potentialGain = 1.0 - tokenPrice;
+        const riskRewardRatio = potentialGain > 0 ? tokenPrice / potentialGain : Infinity;
+        if (riskRewardRatio > maxRR) {
+          console.log(`⚠️ Skipping: ${market.coin} R/R ${riskRewardRatio.toFixed(1)}:1 > max ${maxRR}:1`);
+          this.io.emit('tradeSkipped', {
+            market_id: market.market_id, coin: market.coin,
+            reason: `風險回報比 ${riskRewardRatio.toFixed(1)}:1 超過上限 ${maxRR}:1`,
+            timestamp: Date.now()
+          });
+          continue;
+        }
+
+        // --- Calculate raw Half Kelly fraction ---
+        const edge = Math.abs(analysis.compositeScore);
+        const estProb = Math.min(0.95, Math.max(0.05, tokenPrice + edge));
+        const odds = 1 / tokenPrice;
+        const kellyFraction = ((estProb * (odds - 1)) - (1 - estProb)) / (odds - 1);
+        const halfKelly = Math.max(0, kellyFraction / 2);
+
+        if (halfKelly <= 0) {
+          console.log(`⚠️ Skipping: ${market.coin} Kelly says no edge (f=${kellyFraction.toFixed(4)})`);
+          this.io.emit('tradeSkipped', {
+            market_id: market.market_id, coin: market.coin,
+            reason: `Kelly 無 edge (f=${kellyFraction.toFixed(4)})`,
+            timestamp: Date.now()
+          });
+          continue;
+        }
+
+        candidates.push({
+          market, analysis, prices, tokenPrice,
+          halfKelly, tradeKey, mode
+        });
+      }
+
+      // ===== Phase 2: Sort by Half Kelly (highest edge first) =====
+      candidates.sort((a, b) => b.halfKelly - a.halfKelly);
+
+      // ===== Phase 3: Allocate budget and execute trades =====
+      const totalBudget = bankroll * maxExposure;
+      let usedBudget = 0;
+
+      for (const candidate of candidates) {
+        const remainingBudget = totalBudget - usedBudget;
+        if (remainingBudget <= 1) {
+          console.log(`⚠️ Budget exhausted ($${usedBudget.toFixed(2)}/$${totalBudget.toFixed(2)}), skipping remaining`);
+          this.io.emit('tradeSkipped', {
+            market_id: candidate.market.market_id,
+            coin: candidate.market.coin,
+            reason: `併發預算已用盡 ($${usedBudget.toFixed(2)}/$${totalBudget.toFixed(2)})`,
+            timestamp: Date.now()
+          });
+          break;
+        }
+
+        // Calculate trade amount from Kelly
+        let tradeAmount = candidate.halfKelly * bankroll;
+
+        // Apply min/max bounds
+        const baseAmount = parseFloat(this.config.tradeAmount) || 10;
+        const MAX_TRADE = baseAmount * 2;
+        const MIN_TRADE = 1;
+        tradeAmount = Math.min(MAX_TRADE, Math.max(MIN_TRADE, tradeAmount));
+
+        // Cap to remaining budget
+        tradeAmount = Math.min(tradeAmount, remainingBudget);
+
+        // Confidence adjustment
+        if (candidate.analysis.tradeAmount === 'increased') {
+          tradeAmount = Math.min(MAX_TRADE, Math.min(remainingBudget, tradeAmount * 1.3));
+        } else if (candidate.analysis.tradeAmount === 'reduced') {
+          tradeAmount = tradeAmount * 0.5;
+        }
+
+        // Final min check after adjustments
+        if (tradeAmount < MIN_TRADE) {
+          console.log(`⚠️ Trade amount $${tradeAmount.toFixed(2)} below minimum, skipping`);
+          continue;
+        }
+
+        usedBudget += tradeAmount;
+        this.processedTrades.add(candidate.tradeKey);
+
+        // Pass the Kelly-calculated amount to executeTrade
+        this.config._kellyAmount = tradeAmount;
+        await this.executeTrade(
+          candidate.market, candidate.analysis.decision,
+          candidate.analysis.outcome, candidate.prices,
+          candidate.mode, candidate.analysis
+        );
+        delete this.config._kellyAmount;
+
+        console.log(`💰 Budget: $${usedBudget.toFixed(2)} / $${totalBudget.toFixed(2)} used`);
       }
 
       this.db.updateStatus({ last_heartbeat: Date.now() });
@@ -208,13 +304,19 @@ class TradingEngine {
 
   async executeTrade(market, side, outcome, prices, mode, analysis) {
     try {
-      let tradeAmount = parseFloat(this.config.tradeAmount) || 10;
-      
-      // Adjust trade amount based on analysis recommendation
-      if (analysis && analysis.tradeAmount === 'increased') {
-        tradeAmount = tradeAmount * 1.5; // 50% increase for high confidence
-      } else if (analysis && analysis.tradeAmount === 'reduced') {
-        tradeAmount = tradeAmount * 0.5; // 50% reduction for low confidence
+      // Use Kelly-calculated amount if available, otherwise fall back to base config
+      let tradeAmount;
+      if (this.config._kellyAmount) {
+        tradeAmount = this.config._kellyAmount;
+        // Kelly adjustments already applied in checkTradingOpportunities
+      } else {
+        tradeAmount = parseFloat(this.config.tradeAmount) || 10;
+        // Apply old adjustment logic as fallback
+        if (analysis && analysis.tradeAmount === 'increased') {
+          tradeAmount = tradeAmount * 1.5;
+        } else if (analysis && analysis.tradeAmount === 'reduced') {
+          tradeAmount = tradeAmount * 0.5;
+        }
       }
       
       const price = outcome === 'YES' ? prices.yes_price : prices.no_price;
@@ -301,11 +403,6 @@ class TradingEngine {
       console.error('❌ Error executing trade:', error.message);
       this.io.emit('error', { message: 'Failed to execute trade', error: error.message });
     }
-  }
-
-  updateConfig(newConfig) {
-    this.config = { ...this.config, ...newConfig };
-    console.log('⚙️ Configuration updated:', this.config);
   }
 
   // Helper function to determine market winner from Gamma API response

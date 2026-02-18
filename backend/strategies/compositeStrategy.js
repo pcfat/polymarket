@@ -62,28 +62,33 @@ async function analyzeMarket(coin, yesTokenId, noTokenId, weights = DEFAULT_WEIG
     let outcome = null;
     let tradeAmount = 'normal'; // 'normal', 'reduced', 'increased'
 
-    // Strong signals with high confidence
-    if (compositeScore > 0.5 && confidence > 0.6) {
+    const MIN_COMPOSITE_SCORE = 0.35;  // Raised from 0.3
+    const MIN_CONFIDENCE = 0.50;       // Raised from 0.4
+    const STRONG_COMPOSITE_SCORE = 0.5;
+    const STRONG_CONFIDENCE = 0.65;    // Raised from 0.6
+
+    // Strong bullish signals with high confidence
+    if (compositeScore > STRONG_COMPOSITE_SCORE && confidence > STRONG_CONFIDENCE) {
       decision = 'BUY';
-      outcome = 'YES'; // UP
+      outcome = 'YES';
       tradeAmount = 'increased';
     } 
     // Moderate bullish signals
-    else if (compositeScore > 0.3 && confidence > 0.4) {
+    else if (compositeScore > MIN_COMPOSITE_SCORE && confidence > MIN_CONFIDENCE) {
       decision = 'BUY';
-      outcome = 'YES'; // UP
+      outcome = 'YES';
       tradeAmount = 'normal';
     }
     // Strong bearish signals with high confidence
-    else if (compositeScore < -0.5 && confidence > 0.6) {
+    else if (compositeScore < -STRONG_COMPOSITE_SCORE && confidence > STRONG_CONFIDENCE) {
       decision = 'BUY';
-      outcome = 'NO'; // DOWN
+      outcome = 'NO';
       tradeAmount = 'increased';
     }
     // Moderate bearish signals
-    else if (compositeScore < -0.3 && confidence > 0.4) {
+    else if (compositeScore < -MIN_COMPOSITE_SCORE && confidence > MIN_CONFIDENCE) {
       decision = 'BUY';
-      outcome = 'NO'; // DOWN
+      outcome = 'NO';
       tradeAmount = 'normal';
     }
 

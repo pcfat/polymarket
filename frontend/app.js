@@ -177,6 +177,10 @@ socket.on('analysis', (data) => {
     updateAnalysisDisplay();
 });
 
+socket.on('tradeSkipped', (data) => {
+    addLog(`⚠️ 跳過交易: ${data.coin} - ${data.reason}`, 'warning');
+});
+
 // Update Functions
 function updateStatus(data) {
     if (data.isRunning) {
@@ -384,7 +388,12 @@ async function updateConfig() {
     try {
         const config = {
             tradeAmount: parseFloat(document.getElementById('tradeAmount').value),
-            tradeWindowSeconds: parseInt(document.getElementById('tradeWindow').value)
+            tradeWindowSeconds: parseInt(document.getElementById('tradeWindow').value),
+            oddsMinPrice: parseFloat(document.getElementById('oddsMinPrice').value),
+            oddsMaxPrice: parseFloat(document.getElementById('oddsMaxPrice').value),
+            maxRiskReward: parseFloat(document.getElementById('maxRiskReward').value),
+            bankroll: parseFloat(document.getElementById('bankroll').value),
+            maxExposure: parseFloat(document.getElementById('maxExposure').value)
         };
         
         await apiCall('/api/config', 'PUT', config);
@@ -624,6 +633,22 @@ async function init() {
         if (statusData.config) {
             document.getElementById('tradeAmount').value = statusData.config.tradeAmount;
             document.getElementById('tradeWindow').value = statusData.config.tradeWindowSeconds;
+            // New fields
+            if (document.getElementById('oddsMinPrice')) {
+                document.getElementById('oddsMinPrice').value = statusData.config.oddsMinPrice || 0.30;
+            }
+            if (document.getElementById('oddsMaxPrice')) {
+                document.getElementById('oddsMaxPrice').value = statusData.config.oddsMaxPrice || 0.75;
+            }
+            if (document.getElementById('maxRiskReward')) {
+                document.getElementById('maxRiskReward').value = statusData.config.maxRiskReward || 5;
+            }
+            if (document.getElementById('bankroll')) {
+                document.getElementById('bankroll').value = statusData.config.bankroll || 100;
+            }
+            if (document.getElementById('maxExposure')) {
+                document.getElementById('maxExposure').value = statusData.config.maxExposure || 0.50;
+            }
         }
         
         addLog('系統初始化完成', 'success');

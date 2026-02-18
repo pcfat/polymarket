@@ -219,6 +219,7 @@ class TradingEngine {
 
         // --- Calculate raw Half Kelly fraction ---
         const edge = Math.abs(analysis.compositeScore);
+        // Estimate win probability by adjusting market price with our edge signal
         const estProb = Math.min(0.95, Math.max(0.05, tokenPrice + edge));
         const odds = 1 / tokenPrice;
         const kellyFraction = ((estProb * (odds - 1)) - (1 - estProb)) / (odds - 1);
@@ -273,7 +274,7 @@ class TradingEngine {
 
         // Confidence adjustment
         if (candidate.analysis.tradeAmount === 'increased') {
-          tradeAmount = Math.min(MAX_TRADE, Math.min(remainingBudget, tradeAmount * 1.3));
+          tradeAmount = Math.min(MAX_TRADE, remainingBudget, tradeAmount * 1.3);
         } else if (candidate.analysis.tradeAmount === 'reduced') {
           tradeAmount = tradeAmount * 0.5;
         }
@@ -288,13 +289,11 @@ class TradingEngine {
         this.processedTrades.add(candidate.tradeKey);
 
         // Pass the Kelly-calculated amount to executeTrade
-        this.config._kellyAmount = tradeAmount;
         await this.executeTrade(
           candidate.market, candidate.analysis.decision,
           candidate.analysis.outcome, candidate.prices,
-          candidate.mode, candidate.analysis
+          candidate.mode, candidate.analysis, tradeAmount
         );
-        delete this.config._kellyAmount;
 
         console.log(`💰 Budget: $${usedBudget.toFixed(2)} / $${totalBudget.toFixed(2)} used`);
       }
@@ -305,12 +304,12 @@ class TradingEngine {
     }
   }
 
-  async executeTrade(market, side, outcome, prices, mode, analysis) {
+  async executeTrade(market, side, outcome, prices, mode, analysis, kellyAmount = null) {
     try {
-      // Use Kelly-calculated amount if available, otherwise fall back to base config
+      // Use Kelly-calculated amount if provided, otherwise fall back to base config
       let tradeAmount;
-      if (this.config._kellyAmount) {
-        tradeAmount = this.config._kellyAmount;
+      if (kellyAmount !== null) {
+        tradeAmount = kellyAmount;
         // Kelly adjustments already applied in checkTradingOpportunities
       } else {
         tradeAmount = parseFloat(this.config.tradeAmount) || 10;

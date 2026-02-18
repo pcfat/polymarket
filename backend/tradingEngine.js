@@ -221,6 +221,19 @@ class TradingEngine {
           
           const potentialGain = (1.0 - tokenPrice); // Max gain per $1 of token
           const potentialLoss = tokenPrice;          // Max loss per $1 of token
+          
+          // Guard against division by zero when token price is very close to 1.0
+          if (potentialGain <= 0.001) {
+            console.log(`⚠️ Skipping trade: ${market.coin} price ${tokenPrice.toFixed(4)} too close to 1.0`);
+            this.io.emit('tradeSkipped', {
+              market_id: market.market_id,
+              coin: market.coin,
+              reason: `Price ${tokenPrice.toFixed(4)} too close to 1.0 (no potential gain)`,
+              timestamp: Date.now()
+            });
+            continue;
+          }
+          
           const riskRewardRatio = potentialLoss / potentialGain;
           
           if (riskRewardRatio > MAX_RISK_REWARD_RATIO) {
@@ -294,27 +307,33 @@ class TradingEngine {
       
       // Estimate our probability using the aligned edge
       // Clamp between 0.05 and 0.95 to avoid extreme Kelly sizing
+      // Lower bound (0.05): Prevents betting on very unlikely events
+      // Upper bound (0.95): Prevents over-confidence and excessive leverage
+      // These bounds ensure Kelly fraction stays reasonable even with high edge estimates
       const estimatedProb = Math.min(0.95, Math.max(0.05, impliedProb + alignedEdge));
       
-      // Calculate decimal odds - defensive check to prevent division by zero
-      if (price <= 0) {
-        console.log(`⚠️ Invalid price ${price} for Kelly calculation, skipping`);
-        return;
-      }
+      // Calculate decimal odds
       const odds = 1 / price;
       
+      // Guard against odds = 1 (or very close), which causes division by zero
+      if (Math.abs(odds - 1.0) < 0.01) {
+        console.log(`⚠️ Odds too close to 1.0 (price=${price.toFixed(4)}), skipping Kelly calculation`);
+        this.io.emit('tradeSkipped', {
+          market_id: market.market_id,
+          coin: market.coin,
+          reason: `Odds ${odds.toFixed(2)} too close to 1.0`,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
       // Calculate Kelly fraction using standard formula
-      // If odds = 1 (price = 1), denominator becomes 0, but this is caught by price validation above
       const kellyFraction = ((estimatedProb * (odds - 1)) - (1 - estimatedProb)) / (odds - 1);
-      const halfKelly = Math.max(0, kellyFraction / 2); // Half Kelly for conservative sizing
       
-      let tradeAmount = halfKelly * bankroll;
-      
-      // Apply min/max bounds
-      const MIN_TRADE = 1;   // Minimum $1 trade
-      const MAX_TRADE_MULTIPLIER = 2; // Maximum trade size as multiplier of base amount
-      const MAX_TRADE = baseAmount * MAX_TRADE_MULTIPLIER;
-      tradeAmount = Math.min(MAX_TRADE, Math.max(MIN_TRADE, tradeAmount));
+      // Use Half Kelly for conservative sizing
+      // Also cap at 25% of bankroll to prevent extreme sizing from high odds
+      const MAX_KELLY_FRACTION = 0.25;
+      const halfKelly = Math.min(MAX_KELLY_FRACTION, Math.max(0, kellyFraction / 2));
       
       // If Kelly says don't bet (fraction <= 0), skip the trade
       if (kellyFraction <= 0) {
@@ -328,15 +347,19 @@ class TradingEngine {
         return;
       }
       
-      // Adjust based on analysis confidence level
-      const HIGH_CONFIDENCE_MULTIPLIER = 1.3;
-      const LOW_CONFIDENCE_MULTIPLIER = 0.5;
+      // Apply Half Kelly sizing to bankroll
+      let tradeAmount = halfKelly * bankroll;
       
-      if (analysis && analysis.tradeAmount === 'increased') {
-        tradeAmount = Math.min(MAX_TRADE, tradeAmount * HIGH_CONFIDENCE_MULTIPLIER);
-      } else if (analysis && analysis.tradeAmount === 'reduced') {
-        tradeAmount = tradeAmount * LOW_CONFIDENCE_MULTIPLIER;
-      }
+      // Apply min/max bounds
+      const MIN_TRADE = 1;   // Minimum $1 trade
+      const MAX_TRADE_MULTIPLIER = 2; // Maximum trade size as multiplier of base amount
+      const MAX_TRADE = baseAmount * MAX_TRADE_MULTIPLIER;
+      tradeAmount = Math.min(MAX_TRADE, Math.max(MIN_TRADE, tradeAmount));
+      
+      // Note: We don't apply additional confidence multipliers here because:
+      // - Kelly formula already incorporates our confidence through estimatedProb
+      // - Additional multipliers would distort the mathematically optimal Kelly sizing
+      // - The Half Kelly approach (50% of full Kelly) already provides conservative sizing
       
       const shares = price > 0 ? tradeAmount / price : 0;
 

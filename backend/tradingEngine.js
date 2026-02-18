@@ -252,13 +252,32 @@ class TradingEngine {
       // Kelly fraction = (p * (odds - 1) - (1 - p)) / (odds - 1)
       // where p = estimated probability of winning, odds = decimal odds
       // Half Kelly = Kelly / 2 (more conservative)
-      const impliedProb = price; // Market's implied probability
-      const estimatedEdge = Math.abs(analysis.compositeScore); // Our estimated edge (0 to 1)
       
-      // Adjust probability based on edge - scale edge as a multiplier rather than addition
-      // If edge is positive, increase our estimated probability proportionally
-      const edgeAdjustment = 1 + (estimatedEdge * 0.5); // Max 50% increase
-      const estimatedProb = Math.min(0.95, impliedProb * edgeAdjustment); // Clamp to avoid extremes
+      // Market price represents implied probability for binary outcome tokens (0-1 range)
+      const impliedProb = price;
+      
+      // Use compositeScore to adjust probability
+      // For YES: positive score means we think YES is more likely than market
+      // For NO: negative score means we think NO is more likely (YES less likely)
+      const compositeScore = analysis.compositeScore;
+      const direction = outcome === 'YES' ? 1 : -1;
+      const alignedEdge = compositeScore * direction; // Edge aligned with our trade direction
+      
+      // If edge is negative (we're betting against our signal), skip trade
+      if (alignedEdge <= 0) {
+        console.log(`⚠️ Trade direction misaligned with signal: compositeScore=${compositeScore.toFixed(3)}, outcome=${outcome}, skipping`);
+        this.io.emit('tradeSkipped', {
+          market_id: market.market_id,
+          coin: market.coin,
+          reason: `Signal misalignment: score=${compositeScore.toFixed(3)} for ${outcome}`,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
+      // Estimate our probability using the aligned edge
+      // Clamp between 0.05 and 0.95 to avoid extreme Kelly sizing
+      const estimatedProb = Math.min(0.95, Math.max(0.05, impliedProb + alignedEdge));
       
       const odds = 1 / price; // Decimal odds
       const kellyFraction = ((estimatedProb * (odds - 1)) - (1 - estimatedProb)) / (odds - 1);

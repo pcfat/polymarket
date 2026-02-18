@@ -714,12 +714,6 @@ class TradingEngine {
 
   updateConfig(newConfig) {
     this.config = { ...this.config, ...newConfig };
-    
-    // If bankroll changed but maxExposure wasn't explicitly set, update maxExposure to 50% of new bankroll
-    if (newConfig.bankroll !== undefined && newConfig.maxExposure === undefined) {
-      this.config.maxExposure = parseFloat(newConfig.bankroll) * 0.5;
-    }
-    
     console.log('⚙️ Configuration updated:', this.config);
   }
 

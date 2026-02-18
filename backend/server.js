@@ -213,8 +213,13 @@ app.put('/api/config', (req, res) => {
     if (bankroll !== undefined) newConfig.bankroll = parseFloat(bankroll);
     if (maxExposure !== undefined) newConfig.maxExposure = parseFloat(maxExposure);
 
+    // If bankroll changed but maxExposure wasn't provided, auto-update maxExposure to 50% of bankroll
+    if (bankroll !== undefined && maxExposure === undefined) {
+      newConfig.maxExposure = parseFloat(bankroll) * 0.5;
+    }
+
     Object.assign(tradingConfig, newConfig);
-    engine.updateConfig(tradingConfig);
+    engine.updateConfig(newConfig); // Pass only the changes
 
     res.json({ success: true, config: tradingConfig });
   } catch (error) {

@@ -249,35 +249,49 @@ class TradingEngine {
       const price = outcome === 'YES' ? prices.yes_price : prices.no_price;
       
       // Half Kelly position sizing
-      // Kelly fraction = (estimated_prob * (odds-1) - (1-estimated_prob)) / (odds-1)
+      // Kelly fraction = (p * (odds - 1) - (1 - p)) / (odds - 1)
+      // where p = estimated probability of winning, odds = decimal odds
       // Half Kelly = Kelly / 2 (more conservative)
       const impliedProb = price; // Market's implied probability
-      const estimatedEdge = Math.abs(analysis.compositeScore); // Our estimated edge
-      const estimatedProb = impliedProb + estimatedEdge; // Our estimated true probability
-      const clampedProb = Math.min(0.95, Math.max(0.05, estimatedProb)); // Clamp to avoid extremes
+      const estimatedEdge = Math.abs(analysis.compositeScore); // Our estimated edge (0 to 1)
+      
+      // Adjust probability based on edge - scale edge as a multiplier rather than addition
+      // If edge is positive, increase our estimated probability proportionally
+      const edgeAdjustment = 1 + (estimatedEdge * 0.5); // Max 50% increase
+      const estimatedProb = Math.min(0.95, impliedProb * edgeAdjustment); // Clamp to avoid extremes
       
       const odds = 1 / price; // Decimal odds
-      const kellyFraction = ((clampedProb * (odds - 1)) - (1 - clampedProb)) / (odds - 1);
+      const kellyFraction = ((estimatedProb * (odds - 1)) - (1 - estimatedProb)) / (odds - 1);
       const halfKelly = Math.max(0, kellyFraction / 2); // Half Kelly, minimum 0
       
       let tradeAmount = halfKelly * bankroll;
       
       // Apply min/max bounds
       const MIN_TRADE = 1;   // Minimum $1 trade
-      const MAX_TRADE = baseAmount * 2; // Maximum 2x base amount
+      const MAX_TRADE_MULTIPLIER = 2; // Maximum trade size as multiplier of base amount
+      const MAX_TRADE = baseAmount * MAX_TRADE_MULTIPLIER;
       tradeAmount = Math.min(MAX_TRADE, Math.max(MIN_TRADE, tradeAmount));
       
       // If Kelly says don't bet (fraction <= 0), skip the trade
       if (kellyFraction <= 0) {
         console.log(`⚠️ Kelly criterion says no edge: fraction=${kellyFraction.toFixed(4)}, skipping trade`);
+        this.io.emit('tradeSkipped', {
+          market_id: market.market_id,
+          coin: market.coin,
+          reason: `Kelly criterion shows no edge (fraction=${kellyFraction.toFixed(4)})`,
+          timestamp: Date.now()
+        });
         return;
       }
       
       // Adjust based on analysis confidence level
+      const HIGH_CONFIDENCE_MULTIPLIER = 1.3;
+      const LOW_CONFIDENCE_MULTIPLIER = 0.5;
+      
       if (analysis && analysis.tradeAmount === 'increased') {
-        tradeAmount = Math.min(MAX_TRADE, tradeAmount * 1.3);
+        tradeAmount = Math.min(MAX_TRADE, tradeAmount * HIGH_CONFIDENCE_MULTIPLIER);
       } else if (analysis && analysis.tradeAmount === 'reduced') {
-        tradeAmount = tradeAmount * 0.5;
+        tradeAmount = tradeAmount * LOW_CONFIDENCE_MULTIPLIER;
       }
       
       const shares = price > 0 ? tradeAmount / price : 0;

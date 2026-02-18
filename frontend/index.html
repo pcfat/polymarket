@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polymarket 15分鐘加密貨幣自動交易系統</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🤖 Polymarket 15分鐘加密貨幣自動交易系統</h1>
+            <div class="connection-status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">連接中...</span>
+            </div>
+        </header>
+
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <div class="control-group">
+                <h3>引擎控制</h3>
+                <div class="button-group">
+                    <button id="startBtn" class="btn btn-success">▶️ 啟動</button>
+                    <button id="stopBtn" class="btn btn-danger">⏹️ 停止</button>
+                </div>
+                <div class="engine-status">
+                    <span id="engineStatus">已停止</span>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <h3>交易模式</h3>
+                <div class="mode-toggle">
+                    <button id="paperModeBtn" class="btn btn-mode active">📝 模擬盤</button>
+                    <button id="liveModeBtn" class="btn btn-mode">💰 實盤</button>
+                </div>
+                <div class="mode-indicator">
+                    當前模式: <span id="currentMode">模擬盤</span>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <h3>快速操作</h3>
+                <button id="clearRecordsBtn" class="btn btn-warning">🗑️ 清除所有紀錄</button>
+            </div>
+        </div>
+
+        <!-- Statistics Cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">總交易次數</div>
+                <div class="stat-value" id="totalTrades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">勝率</div>
+                <div class="stat-value" id="winRate">0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">總盈虧</div>
+                <div class="stat-value" id="totalPnl">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">平均盈虧</div>
+                <div class="stat-value" id="avgPnl">$0.00</div>
+            </div>
+        </div>
+
+        <!-- Strategy Configuration -->
+        <div class="config-panel">
+            <h3>策略設定</h3>
+            <div class="config-grid">
+                <div class="config-item">
+                    <label>交易金額 (USDC)</label>
+                    <input type="number" id="tradeAmount" min="1" step="1" value="10">
+                </div>
+                <div class="config-item">
+                    <label>買入閾值 (YES ≥)</label>
+                    <input type="number" id="buyThreshold" min="0" max="1" step="0.01" value="0.55">
+                </div>
+                <div class="config-item">
+                    <label>賣出閾值 (YES ≤)</label>
+                    <input type="number" id="sellThreshold" min="0" max="1" step="0.01" value="0.45">
+                </div>
+                <div class="config-item">
+                    <label>交易窗口 (秒)</label>
+                    <input type="number" id="tradeWindow" min="10" step="10" value="120">
+                </div>
+            </div>
+            <button id="updateConfigBtn" class="btn btn-primary">💾 更新設定</button>
+        </div>
+
+        <!-- Markets Grid -->
+        <div class="markets-section">
+            <h3>活躍市場 <span id="marketCount" class="badge">0</span></h3>
+            <div id="marketsGrid" class="markets-grid">
+                <div class="no-data">暫無活躍市場</div>
+            </div>
+        </div>
+
+        <!-- Trades Table -->
+        <div class="trades-section">
+            <div class="section-header">
+                <h3>交易紀錄</h3>
+                <div class="filter-group">
+                    <label>篩選:</label>
+                    <select id="tradeFilter">
+                        <option value="">全部</option>
+                        <option value="paper">模擬盤</option>
+                        <option value="live">實盤</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-container">
+                <table id="tradesTable">
+                    <thead>
+                        <tr>
+                            <th>時間</th>
+                            <th>模式</th>
+                            <th>市場</th>
+                            <th>操作</th>
+                            <th>結果</th>
+                            <th>價格</th>
+                            <th>金額</th>
+                            <th>狀態</th>
+                            <th>盈虧</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tradesBody">
+                        <tr class="no-data-row">
+                            <td colspan="9">暫無交易紀錄</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Logs Panel -->
+        <div class="logs-section">
+            <h3>即時日誌</h3>
+            <div id="logsContainer" class="logs-container">
+                <div class="log-entry">系統已就緒</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <h3 id="confirmTitle">確認操作</h3>
+            <p id="confirmMessage">您確定要執行此操作嗎？</p>
+            <div class="modal-buttons">
+                <button id="confirmYes" class="btn btn-danger">確認</button>
+                <button id="confirmNo" class="btn btn-secondary">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

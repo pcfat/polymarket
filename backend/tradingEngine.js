@@ -603,6 +603,7 @@ class TradingEngine {
     const market = Array.isArray(marketData) ? marketData[0] : marketData;
     
     // Check outcomePrices (most reliable — settled to [1,0] or [0,1])
+    // Index 0 = Up/YES (bullish), Index 1 = Down/NO (bearish)
     let prices = market.outcomePrices;
     if (typeof prices === 'string') {
       try { 
@@ -620,8 +621,22 @@ class TradingEngine {
     
     // Check closed/resolved status
     if (market.closed || market.resolved) {
-      if (market.winning_side) return market.winning_side.toUpperCase();
-      if (market.resolution) return market.resolution.toUpperCase();
+      // Map API outcomes to internal representation
+      // API returns "Up"/"Down", we use "YES"/"NO" internally for database compatibility
+      if (market.winning_side) {
+        const winner = market.winning_side.toUpperCase();
+        if (winner === 'UP') return 'YES';
+        if (winner === 'DOWN') return 'NO';
+        // Also support old format for backward compatibility
+        if (winner === 'YES' || winner === 'NO') return winner;
+      }
+      if (market.resolution) {
+        const resolution = market.resolution.toUpperCase();
+        if (resolution === 'UP') return 'YES';
+        if (resolution === 'DOWN') return 'NO';
+        // Also support old format for backward compatibility
+        if (resolution === 'YES' || resolution === 'NO') return resolution;
+      }
     }
     
     return null; // Not yet resolved

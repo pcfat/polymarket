@@ -144,6 +144,10 @@ socket.on('newTrade', (trade) => {
     addLog(`新交易: ${trade.side} ${trade.outcome} - ${trade.market_question.substring(0, MAX_QUESTION_LENGTH)}...`, 'success');
 });
 
+socket.on('tradeSettled', (trade) => {
+    addLog(`交易已結算: ID ${trade.id} - PnL: ${formatCurrency(trade.pnl)}`, 'info');
+});
+
 socket.on('stats', (stats) => {
     updateStats(stats);
 });
@@ -289,7 +293,14 @@ function updateTradesTable(trades) {
         return;
     }
     
-    tradesBody.innerHTML = trades.map(trade => `
+    tradesBody.innerHTML = trades.map(trade => {
+        // Check if trade is pending settlement
+        const isPendingSettlement = (trade.pnl === 0 && trade.status === 'filled');
+        const pnlDisplay = isPendingSettlement 
+            ? '<span style="color: var(--text-secondary)">待結算</span>'
+            : `<span style="color: ${trade.pnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}">${formatCurrency(trade.pnl)}</span>`;
+        
+        return `
         <tr>
             <td>${formatTimestamp(trade.timestamp)}</td>
             <td><span class="mode-badge ${trade.mode}">${trade.mode === 'paper' ? '模擬' : '實盤'}</span></td>
@@ -299,9 +310,10 @@ function updateTradesTable(trades) {
             <td>${trade.price.toFixed(4)}</td>
             <td>${formatCurrency(trade.amount)}</td>
             <td><span class="status-badge ${trade.status}">${trade.status}</span></td>
-            <td style="color: ${trade.pnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}">${formatCurrency(trade.pnl)}</td>
+            <td>${pnlDisplay}</td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
 }
 
 // API Functions

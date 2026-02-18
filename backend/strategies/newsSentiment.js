@@ -1,16 +1,22 @@
 const axios = require('axios');
 
 // Weighting constants for sentiment scoring
-const CRYPTOPANIC_NEWS_WEIGHT = 0.7;    // Weight for CryptoPanic news headlines
+const NEWS_HEADLINE_WEIGHT = 0.7;       // Weight for news headlines
 const COINGECKO_PRICE_WEIGHT = 0.5;     // Weight for CoinGecko price momentum (fallback)
-const FEAR_GREED_PRIMARY_WEIGHT = 0.3;  // Weight for F&G when news is available
-const FEAR_GREED_FALLBACK_WEIGHT = 0.5; // Weight for F&G when only price data available
+const FEAR_GREED_PRIMARY_WEIGHT = 0.3;  // Weight for F&G when news is available (sums to 1.0 with NEWS_HEADLINE_WEIGHT)
+const FEAR_GREED_FALLBACK_WEIGHT = 0.5; // Weight for F&G when only price data available (sums to 1.0 with COINGECKO_PRICE_WEIGHT)
 
-// CryptoPanic sentiment analysis constants
-const VOTE_WEIGHT = 0.6;                // Weight for community votes in CryptoPanic posts
-const KEYWORD_WEIGHT = 0.4;             // Weight for keyword analysis in CryptoPanic posts
+// News sentiment analysis constants
 const KEYWORD_NORMALIZATION = 5;        // Divisor to normalize keyword scores to -1 to +1 range
 const RECENCY_DECAY = 0.5;              // Weight decay factor from newest to oldest posts
+
+// Coin to ticker symbol mapping for news APIs
+const COIN_TO_TICKER_MAP = {
+  'bitcoin': 'BTC',
+  'ethereum': 'ETH',
+  'solana': 'SOL',
+  'ripple': 'XRP'
+};
 
 // Positive keywords for sentiment analysis
 const POSITIVE_WORDS = [
@@ -82,83 +88,61 @@ function getCoinNameForSearch(coin) {
 }
 
 /**
- * Fetch news from CryptoPanic free API
+ * Fetch news from CryptoCompare API
  * @param {string} coinName - Coin name to search (e.g., 'bitcoin')
- * @returns {Array|null} - Array of news posts or null if failed
+ * @returns {Array|null} - Array of news articles or null if failed
  */
-async function fetchCryptoPanicNews(coinName) {
-  const currencyMap = {
-    'bitcoin': 'BTC',
-    'ethereum': 'ETH',
-    'solana': 'SOL',
-    'ripple': 'XRP'
-  };
-  const currency = currencyMap[coinName] || 'BTC';
+async function fetchCryptoNews(coinName) {
+  const ticker = COIN_TO_TICKER_MAP[coinName] || 'BTC';
   
   try {
-    // CryptoPanic free API - no auth token required for public posts
-    const response = await axios.get('https://cryptopanic.com/api/free/v1/posts/', {
+    // CryptoCompare free news API - no auth required for basic access
+    const response = await axios.get('https://min-api.cryptocompare.com/data/v2/news/', {
       params: {
-        currencies: currency,
-        kind: 'news',
-        public: true  // Access public posts without authentication
+        categories: ticker,
+        lang: 'EN',
+        sortOrder: 'latest'
       },
       timeout: 5000
     });
     
-    const posts = response.data?.results || [];
-    return posts.slice(0, 20); // Limit to 20 most recent
+    const articles = response.data?.Data || [];
+    return articles.slice(0, 20);
   } catch (error) {
-    console.error(`Error fetching CryptoPanic news for ${coinName}:`, error.message);
-    return null; // null means "failed, try fallback"
+    console.error(`Error fetching CryptoCompare news for ${coinName}:`, error.message);
+    return null;
   }
 }
 
 /**
- * Analyze CryptoPanic posts sentiment using their vote data
- * @param {Array} posts - Array of CryptoPanic posts
+ * Analyze crypto news sentiment using keyword analysis
+ * @param {Array} articles - Array of CryptoCompare news articles
  * @returns {number} - Sentiment score (-1 to 1)
  */
-function analyzeCryptoPanicSentiment(posts) {
-  if (!posts || posts.length === 0) return 0;
+function analyzeCryptoNewsSentiment(articles) {
+  if (!articles || articles.length === 0) return 0;
   
   let totalScore = 0;
   let totalWeight = 0;
   
-  for (let i = 0; i < posts.length; i++) {
-    const post = posts[i];
-    let postScore = 0;
+  for (let i = 0; i < articles.length; i++) {
+    const article = articles[i];
+    let articleScore = 0;
     
-    // Use CryptoPanic's community votes if available
-    if (post.votes) {
-      const positive = (post.votes.positive || 0) + (post.votes.liked || 0);
-      const negative = (post.votes.negative || 0) + (post.votes.disliked || 0);
-      const total = positive + negative;
-      if (total > 0) {
-        postScore = (positive - negative) / total; // -1 to +1
-      }
+    // Analyze title (primary signal)
+    if (article.title) {
+      articleScore = analyzeSentimentText(article.title);
     }
     
-    // Also apply keyword analysis on title as supplementary signal
-    if (post.title) {
-      const keywordScore = analyzeSentimentText(post.title);
-      // Combine: 60% votes, 40% keywords (or 100% keywords if no votes)
-      if (post.votes && (post.votes.positive || post.votes.negative || post.votes.liked || post.votes.disliked)) {
-        postScore = postScore * VOTE_WEIGHT + (keywordScore / KEYWORD_NORMALIZATION) * KEYWORD_WEIGHT;
-      } else {
-        postScore = keywordScore / KEYWORD_NORMALIZATION; // Normalize keyword score to -1 to +1 range
-      }
-      // Clamp to ensure postScore stays within valid range
-      postScore = Math.max(-1, Math.min(1, postScore));
-    }
+    // Normalize to -1 to +1 range
+    articleScore = Math.max(-1, Math.min(1, articleScore / KEYWORD_NORMALIZATION));
     
-    // Weight by recency (newer posts = higher weight, 50% decay from newest to oldest)
-    const weight = 1 - (i / posts.length) * RECENCY_DECAY;
-    totalScore += postScore * weight;
+    // Weight by recency
+    const weight = 1 - (i / articles.length) * RECENCY_DECAY;
+    totalScore += articleScore * weight;
     totalWeight += weight;
   }
   
-  // Calculate weighted average
   const avgScore = totalWeight > 0 ? totalScore / totalWeight : 0;
   return Math.max(-1, Math.min(1, avgScore));
 }
@@ -265,24 +249,24 @@ async function analyzeNewsSentiment(coin) {
     const fearGreed = await fetchFearGreedIndex();
     const fearGreedScore = fearGreedToScore(fearGreed.value);
     
-    // Layer 1: Try CryptoPanic news (primary)
-    const posts = await fetchCryptoPanicNews(coinName);
+    // Layer 1: Try CryptoCompare news (primary)
+    const articles = await fetchCryptoNews(coinName);
     
-    if (posts && posts.length > 0) {
-      const newsSentiment = analyzeCryptoPanicSentiment(posts);
+    if (articles && articles.length > 0) {
+      const newsSentiment = analyzeCryptoNewsSentiment(articles);
       // Combine: 70% news headlines, 30% Fear & Greed
-      const combinedScore = newsSentiment * CRYPTOPANIC_NEWS_WEIGHT + fearGreedScore * FEAR_GREED_PRIMARY_WEIGHT;
+      const combinedScore = newsSentiment * NEWS_HEADLINE_WEIGHT + fearGreedScore * FEAR_GREED_PRIMARY_WEIGHT;
       
       return {
         score: combinedScore,
         details: {
           coin: coinName,
-          source: 'cryptopanic',
-          newsCount: posts.length,
+          source: 'cryptocompare',
+          newsCount: articles.length,
           avgSentiment: newsSentiment,
           fearGreedIndex: fearGreed.value,
           fearGreedLabel: fearGreed.classification,
-          recentHeadlines: posts.slice(0, 5).map(p => p.title)
+          recentHeadlines: articles.slice(0, 5).map(a => a.title)
         }
       };
     }

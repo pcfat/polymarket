@@ -47,6 +47,41 @@ function formatTimestamp(timestamp) {
     });
 }
 
+function formatCountdown(endDateMs) {
+    const now = Date.now();
+    const remainingMs = endDateMs - now;
+    
+    if (remainingMs <= 0) {
+        return '已到期';
+    }
+    
+    const totalSeconds = Math.floor(remainingMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function getCoinIcon(coin) {
+    const icons = {
+        'BTC': '🟠',
+        'ETH': '💎',
+        'SOL': '🟣',
+        'XRP': '⚫'
+    };
+    return icons[coin] || '💰';
+}
+
+function getCoinColor(coin) {
+    const colors = {
+        'BTC': '#f7931a',
+        'ETH': '#627eea',
+        'SOL': '#9945ff',
+        'XRP': '#23292f'
+    };
+    return colors[coin] || 'var(--accent-blue)';
+}
+
 function formatCurrency(value) {
     return `$${parseFloat(value).toFixed(2)}`;
 }
@@ -110,6 +145,7 @@ socket.on('stats', (stats) => {
 socket.on('markets', (data) => {
     updateMarkets(data.markets);
     marketCount.textContent = data.count;
+    startCountdownUpdates();
 });
 
 socket.on('recentTrades', (trades) => {
@@ -176,14 +212,63 @@ function updateMarkets(markets) {
         return;
     }
     
-    marketsGrid.innerHTML = markets.map(market => `
-        <div class="market-card">
+    marketsGrid.innerHTML = markets.map(market => {
+        const countdown = formatCountdown(market.end_date);
+        const icon = getCoinIcon(market.coin);
+        const color = getCoinColor(market.coin);
+        const endTime = new Date(market.end_date).toLocaleTimeString('zh-TW', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+        });
+        
+        return `
+        <div class="market-card" data-end-date="${market.end_date}">
+            <div class="market-header">
+                <span class="coin-badge" style="background-color: ${color}20; color: ${color}; border: 1px solid ${color};">
+                    ${icon} ${market.coin}
+                </span>
+                <span class="countdown-timer">${countdown}</span>
+            </div>
             <h4>${market.question}</h4>
+            <div class="market-prices">
+                <div class="price-item">
+                    <div class="price-label">UP (YES)</div>
+                    <div class="price-value yes">${(market.yes_price || 0).toFixed(3)}</div>
+                </div>
+                <div class="price-item">
+                    <div class="price-label">DOWN (NO)</div>
+                    <div class="price-value no">${(market.no_price || 0).toFixed(3)}</div>
+                </div>
+            </div>
             <div class="market-info">
-                <small style="color: var(--text-secondary);">到期時間: ${new Date(market.end_date).toLocaleString('zh-TW')}</small>
+                <small style="color: var(--text-secondary);">
+                    到期: ${endTime} | 成交量: $${(market.volume || 0).toFixed(0)}
+                </small>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
+}
+
+// Update countdown timers every second
+let countdownInterval = null;
+
+function startCountdownUpdates() {
+    // Clear any existing interval
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+    }
+    
+    countdownInterval = setInterval(() => {
+        const marketCards = document.querySelectorAll('.market-card');
+        marketCards.forEach(card => {
+            const endDate = parseInt(card.getAttribute('data-end-date'));
+            const countdownElement = card.querySelector('.countdown-timer');
+            if (countdownElement && endDate) {
+                countdownElement.textContent = formatCountdown(endDate);
+            }
+        });
+    }, 1000);
 }
 
 function updateTradesTable(trades) {

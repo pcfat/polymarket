@@ -167,7 +167,8 @@ async function analyzeNewsSentiment(coin) {
     const avgNewsSentiment = articleCount > 0 ? totalSentiment / articleCount : 0;
     
     // Normalize news sentiment to -1 to 1 range
-    // Assume typical range is -5 to 5, scale down
+    // Typical sentiment scores range from -5 to +5 based on keyword matching
+    // We divide by 5 to normalize to the [-1, 1] scale used by other strategies
     const normalizedNewsSentiment = Math.max(-1, Math.min(1, avgNewsSentiment / 5));
     
     // Convert Fear & Greed to score

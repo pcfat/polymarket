@@ -322,7 +322,7 @@ function updateAnalysisDisplay() {
     }
     
     analysisGrid.innerHTML = analyses.map(analysis => {
-        const coinName = extractCoinName(analysis.coin);
+        const coinName = escapeHtml(extractCoinName(analysis.coin));
         const tech = analysis.breakdown?.technical || {};
         const news = analysis.breakdown?.news || {};
         const orderFlow = analysis.breakdown?.orderFlow || {};
@@ -333,12 +333,13 @@ function updateAnalysisDisplay() {
         
         const decision = analysis.decision || 'HOLD';
         const confidence = (analysis.confidence || 0) * 100;
+        const decisionText = escapeHtml(getDecisionText(decision, analysis.outcome));
         
         return `
             <div class="analysis-card">
                 <div class="analysis-header">
                     <h4>${coinName}</h4>
-                    <div class="decision-badge decision-${decision.toLowerCase()}">${getDecisionText(decision, analysis.outcome)}</div>
+                    <div class="decision-badge decision-${decision.toLowerCase()}">${decisionText}</div>
                 </div>
                 
                 <div class="signal-bars">
@@ -392,6 +393,12 @@ function updateAnalysisDisplay() {
 }
 
 // Helper functions for analysis display
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 function extractCoinName(questionOrCoin) {
     const lower = questionOrCoin.toLowerCase();
     if (lower.includes('btc') || lower.includes('bitcoin')) return 'BTC';

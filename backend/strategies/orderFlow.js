@@ -76,6 +76,7 @@ function detectLargeOrders(orderbook, threshold = 3) {
   });
   
   // Score: positive for more large buy orders, negative for more large sell orders
+  // +1 in denominator prevents division by zero when no large orders exist
   const score = (largeBuyOrders - largeSellOrders) / (largeBuyOrders + largeSellOrders + 1);
   
   return { largeBuyOrders, largeSellOrders, score };

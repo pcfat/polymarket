@@ -207,11 +207,11 @@ class TradingEngine {
           decision: analysis.decision,
           tradeAmount: analysis.tradeAmount,
           breakdown: {
-            technical: { score: analysis.breakdown.technical.score },
-            news: { score: analysis.breakdown.news.score },
+            technical: { score: analysis.breakdown?.technical?.score ?? 0 },
+            news: { score: analysis.breakdown?.news?.score ?? 0 },
             orderFlow: { 
-              score: analysis.breakdown.orderFlow.score,
-              confidence: analysis.breakdown.orderFlow.confidence
+              score: analysis.breakdown?.orderFlow?.score ?? 0,
+              confidence: analysis.breakdown?.orderFlow?.confidence ?? 0
             }
           },
           weights: analysis.weights

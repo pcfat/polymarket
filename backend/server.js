@@ -32,7 +32,7 @@ const tradingConfig = {
 };
 
 // Socket.IO connection handling
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
   console.log('🔌 Client connected:', socket.id);
 
   // Send initial status
@@ -53,15 +53,27 @@ io.on('connection', (socket) => {
   const recentTrades = db.getTrades(10, status.mode);
   socket.emit('recentTrades', recentTrades);
 
-  // Send markets
+  // Send markets with prices
+  const markets = engine.getMarkets();
+  const marketsWithPrices = [];
+  
+  // Markets are cached from last scan and include prices
+  for (const market of markets) {
+    marketsWithPrices.push({
+      market_id: market.market_id,
+      question: market.question,
+      coin: market.coin || '',
+      end_date: market.end_date,
+      yes_price: market.yes_price || 0,
+      no_price: market.no_price || 0,
+      volume: market.volume || 0,
+      active: market.active
+    });
+  }
+  
   socket.emit('markets', {
-    markets: engine.getMarkets().map(m => ({
-      market_id: m.market_id,
-      question: m.question,
-      end_date: m.end_date,
-      active: m.active
-    })),
-    count: engine.getMarkets().length,
+    markets: marketsWithPrices,
+    count: marketsWithPrices.length,
     timestamp: Date.now()
   });
 

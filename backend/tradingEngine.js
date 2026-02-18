@@ -77,10 +77,13 @@ class TradingEngine {
       const markets = await this.polymarket.get15MinuteCryptoMarkets();
       this.markets = markets;
 
-      // Store market snapshots
+      // Get prices for all markets and emit to frontend
+      const marketsWithPrices = [];
+      
       for (const market of markets) {
         const prices = await this.polymarket.getMarketPrices(market);
         
+        // Store market snapshots
         this.db.insertSnapshot({
           timestamp: Date.now(),
           market_id: market.market_id,
@@ -88,21 +91,28 @@ class TradingEngine {
           yes_price: prices.yes_price,
           no_price: prices.no_price,
           volume: market.volume,
-          liquidity: market.liquidity
+          liquidity: null // Liquidity not available in slug-based API response
+        });
+        
+        // Add market with prices for frontend
+        marketsWithPrices.push({
+          market_id: market.market_id,
+          question: market.question,
+          coin: market.coin,
+          end_date: market.end_date, // Already in milliseconds
+          yes_price: prices.yes_price,
+          no_price: prices.no_price,
+          volume: market.volume,
+          active: market.active
         });
       }
 
       this.db.updateStatus({ last_heartbeat: Date.now() });
       
-      // Emit markets to frontend
+      // Emit markets with prices to frontend
       this.io.emit('markets', {
-        markets: markets.map(m => ({
-          market_id: m.market_id,
-          question: m.question,
-          end_date: m.end_date,
-          active: m.active
-        })),
-        count: markets.length,
+        markets: marketsWithPrices,
+        count: marketsWithPrices.length,
         timestamp: Date.now()
       });
 

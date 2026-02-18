@@ -123,9 +123,10 @@ function analyzeCryptoPanicSentiment(posts) {
   if (!posts || posts.length === 0) return 0;
   
   let totalScore = 0;
-  let count = 0;
+  let totalWeight = 0;
   
-  for (const post of posts) {
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i];
     let postScore = 0;
     
     // Use CryptoPanic's community votes if available
@@ -150,12 +151,13 @@ function analyzeCryptoPanicSentiment(posts) {
     }
     
     // Weight by recency (newer posts = higher weight, 50% decay from newest to oldest)
-    const weight = 1 - (count / posts.length) * RECENCY_DECAY;
+    const weight = 1 - (i / posts.length) * RECENCY_DECAY;
     totalScore += postScore * weight;
-    count++;
+    totalWeight += weight;
   }
   
-  const avgScore = count > 0 ? totalScore / count : 0;
+  // Calculate weighted average
+  const avgScore = totalWeight > 0 ? totalScore / totalWeight : 0;
   return Math.max(-1, Math.min(1, avgScore));
 }
 

@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const PolymarketClient = require('./polymarketClient');
 const { analyzeMarket, DEFAULT_WEIGHTS } = require('./strategies/compositeStrategy');
+const liveTrader = require('./liveTrader');
 
 class TradingEngine {
   constructor(database, config, io) {
@@ -617,9 +618,21 @@ class TradingEngine {
         trade.order_id = `PAPER_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         trade.pnl = 0; // Will be settled after market expiration
       } else {
-        // Live trading - would integrate with @polymarket/clob-client here
-        trade.notes += ' | Live trading not implemented - placeholder';
-        trade.status = 'failed';
+        // Live trading via Polymarket CLOB API
+        const tokenId = outcome === 'YES' ? market.yes_token_id : market.no_token_id;
+        if (!tokenId) {
+          trade.status = 'failed';
+          trade.notes += ` | Live order failed: missing token ID for outcome ${outcome}`;
+        } else {
+          const response = await liveTrader.placeOrder({ tokenId, price, size: shares, side: 'BUY' });
+          if (response.success) {
+            trade.status = 'filled';
+            trade.order_id = response.orderID;
+          } else {
+            trade.status = 'failed';
+            trade.notes += ` | Live order failed: ${response.errorMsg}`;
+          }
+        }
       }
 
       const tradeId = this.db.insertTrade(trade);

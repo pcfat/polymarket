@@ -135,6 +135,15 @@ app.post('/api/mode', (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid mode. Must be "paper" or "live"' });
     }
 
+    if (mode === 'live') {
+      if (!process.env.WALLET_PRIVATE_KEY) {
+        return res.status(400).json({
+          success: false,
+          error: 'Live trading requires WALLET_PRIVATE_KEY in .env file'
+        });
+      }
+    }
+
     db.updateStatus({ mode });
     io.emit('modeChanged', { mode });
     

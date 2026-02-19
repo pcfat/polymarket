@@ -18,6 +18,13 @@ const COIN_TO_TICKER_MAP = {
   'ripple': 'XRP'
 };
 
+// All supported CoinGecko coin IDs (for batched request)
+const COINGECKO_COIN_IDS = ['bitcoin', 'ethereum', 'solana', 'ripple'];
+
+// In-memory cache for CoinGecko responses (TTL: 60 seconds)
+const COINGECKO_CACHE_TTL = 60 * 1000;
+const coinGeckoCache = { data: null, timestamp: 0, promise: null };
+
 // Positive keywords for sentiment analysis
 const POSITIVE_WORDS = [
   'surge', 'rally', 'bullish', 'pump', 'soar', 'breakout', 'moon', 'ath',
@@ -106,7 +113,7 @@ async function fetchCryptoNews(coinName) {
       timeout: 5000
     });
     
-    const articles = response.data?.Data || [];
+    const articles = Array.isArray(response.data?.Data) ? response.data.Data : [];
     return articles.slice(0, 20);
   } catch (error) {
     console.error(`Error fetching CryptoCompare news for ${coinName}:`, error.message);
@@ -148,50 +155,72 @@ function analyzeCryptoNewsSentiment(articles) {
 }
 
 /**
+ * Build CoinGecko sentiment result from raw price-change values
+ * @param {string} coinName
+ * @param {number} priceChange1h
+ * @param {number} priceChange24h
+ * @returns {Object} - { score, details }
+ */
+function buildCoinGeckoResult(coinName, priceChange1h, priceChange24h) {
+  let score = 0;
+  score += Math.max(-2, Math.min(2, priceChange1h / 2)); // 1h: ±2% = ±1 score
+  score += Math.max(-1, Math.min(1, priceChange24h / 10)); // 24h: ±10% = ±1 score
+  return {
+    score: Math.max(-1, Math.min(1, score / 3)),
+    details: {
+      coin: coinName,
+      priceChange1h,
+      priceChange24h,
+      source: 'coingecko'
+    }
+  };
+}
+
+/**
  * Fetch crypto sentiment data from CoinGecko (Layer 2 fallback)
- * Uses price change percentages as market sentiment indicator
+ * Uses price change percentages as market sentiment indicator.
+ * All supported coins are fetched in a single batched request and cached for 60s.
+ * Concurrent callers share the same in-flight request to avoid duplicate API hits.
  * @param {string} coinName - Coin name to search (e.g., 'bitcoin')
  * @returns {Object|null} - { score, details } or null if failed
  */
 async function fetchCoinGeckoSentiment(coinName) {
-  const coinIdMap = { 
-    'bitcoin': 'bitcoin', 
-    'ethereum': 'ethereum', 
-    'solana': 'solana', 
-    'ripple': 'ripple' 
-  };
-  const coinId = coinIdMap[coinName] || 'bitcoin';
-  
+  const coinId = COINGECKO_COIN_IDS.includes(coinName) ? coinName : 'bitcoin';
+
   try {
-    const response = await axios.get(`https://api.coingecko.com/api/v3/coins/${coinId}`, {
-      params: { 
-        localization: false, 
-        tickers: false, 
-        community_data: false, 
-        developer_data: false 
-      },
-      timeout: 5000
-    });
-    
-    const data = response.data;
-    const priceChange24h = data.market_data?.price_change_percentage_24h || 0;
-    const priceChange1h = data.market_data?.price_change_percentage_1h_in_currency?.usd || 0;
-    
-    // Convert price changes to sentiment score
-    // 1h change is more relevant for 15-minute markets
-    let score = 0;
-    score += Math.max(-2, Math.min(2, priceChange1h / 2)); // 1h: ±2% = ±1 score
-    score += Math.max(-1, Math.min(1, priceChange24h / 10)); // 24h: ±10% = ±1 score
-    
-    return {
-      score: Math.max(-1, Math.min(1, score / 3)),
-      details: {
-        coin: coinName,
-        priceChange1h,
-        priceChange24h,
-        source: 'coingecko'
-      }
-    };
+    const now = Date.now();
+
+    // Serve from cache if still fresh
+    if (coinGeckoCache.data && (now - coinGeckoCache.timestamp) < COINGECKO_CACHE_TTL) {
+      const cached = coinGeckoCache.data[coinId];
+      if (!cached) return null;
+      return buildCoinGeckoResult(coinName, cached.usd_1h_change || 0, cached.usd_24h_change || 0);
+    }
+
+    // Deduplicate concurrent requests: share the same in-flight promise
+    if (!coinGeckoCache.promise) {
+      coinGeckoCache.promise = axios.get('https://api.coingecko.com/api/v3/simple/price', {
+        params: {
+          ids: COINGECKO_COIN_IDS.join(','),
+          vs_currencies: 'usd',
+          include_24hr_change: true,
+          include_1hr_change: true
+        },
+        timeout: 5000
+      }).then(response => {
+        coinGeckoCache.data = response.data;
+        coinGeckoCache.timestamp = Date.now();
+        return response.data;
+      }).finally(() => {
+        coinGeckoCache.promise = null;
+      });
+    }
+
+    const responseData = await coinGeckoCache.promise;
+    const data = responseData[coinId];
+    if (!data) return null;
+
+    return buildCoinGeckoResult(coinName, data.usd_1h_change || 0, data.usd_24h_change || 0);
   } catch (error) {
     console.error(`Error fetching CoinGecko data for ${coinName}:`, error.message);
     return null; // Will fall back to Fear & Greed only

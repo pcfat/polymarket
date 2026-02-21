@@ -72,6 +72,7 @@ class LiveTrader {
       console.log(`   Wallet: ${wallet.address}`);
       console.log(`   Funder: ${funderAddress || 'not set'}`);
       console.log(`   Chain: ${chainId}`);
+      console.log(`📋 LiveTrader: Initialized - EOA=${wallet.address}, funder=${funderAddress || 'not set'}`);
       return true;
     } catch (error) {
       this.initError = error.message;
@@ -121,12 +122,26 @@ class LiveTrader {
         return { success: false, errorMsg: `Unsupported order side: ${side}. Only BUY is supported.` };
       }
 
+      // Round price to 2 decimal places (tick size 0.01) and size to 4 decimal places
+      // Polymarket CLOB requires: maker amount max 2 decimals, taker amount max 4 decimals
+      const roundedPrice = Math.round(price * 100) / 100;
+      const roundedSize = Math.round(size * 10000) / 10000;
+
+      if (roundedSize < 0.0001) {
+        return { success: false, errorMsg: `Size ${size} too small after rounding to 4 decimals` };
+      }
+      if (roundedPrice <= 0 || roundedPrice >= 1) {
+        return { success: false, errorMsg: `Price ${price} invalid after rounding to 2 decimals` };
+      }
+
+      console.log(`📋 LiveTrader: Placing order - tokenId=${tokenId}, price=${roundedPrice}, size=${roundedSize}, side=${side}`);
+
       const response = await this.clobClient.createAndPostOrder(
         {
           tokenID: tokenId,
-          price,
+          price: roundedPrice,
           side: clobSide,
-          size
+          size: roundedSize
         },
         { tickSize: '0.01', negRisk: false },
         OrderType.FOK

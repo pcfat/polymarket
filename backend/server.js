@@ -25,7 +25,7 @@ app.use(express.static(path.join(__dirname, '../frontend')));
 let db;
 let engine;
 const tradingConfig = {
-  tradeAmount: process.env.TRADE_AMOUNT || 10,
+  tradeAmount: process.env.TRADE_AMOUNT || process.env.BET_AMOUNT || 10,
   tradeWindowSeconds: process.env.TRADE_WINDOW_SECONDS || 120,
   oddsMinPrice: parseFloat(process.env.ODDS_MIN_PRICE) || 0.30,
   oddsMaxPrice: parseFloat(process.env.ODDS_MAX_PRICE) || 0.75,
@@ -136,10 +136,10 @@ app.post('/api/mode', (req, res) => {
     }
 
     if (mode === 'live') {
-      if (!process.env.WALLET_PRIVATE_KEY) {
+      if (!process.env.WALLET_PRIVATE_KEY && !process.env.POLYMARKET_PRIVATE_KEY) {
         return res.status(400).json({
           success: false,
-          error: 'Live trading requires WALLET_PRIVATE_KEY in .env file'
+          error: 'Live trading requires WALLET_PRIVATE_KEY or POLYMARKET_PRIVATE_KEY in .env file'
         });
       }
     }

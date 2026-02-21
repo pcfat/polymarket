@@ -30,45 +30,48 @@ class LiveTrader {
    */
   async initialize() {
     if (this.initialized) return true;
-    if (this.initError) return false;
+    // Allow retries: do not permanently block on initError
 
     try {
-      const privateKey = process.env.WALLET_PRIVATE_KEY;
+      // Support both WALLET_PRIVATE_KEY and POLYMARKET_PRIVATE_KEY
+      const privateKey = process.env.WALLET_PRIVATE_KEY || process.env.POLYMARKET_PRIVATE_KEY;
       if (!privateKey) {
-        throw new Error('WALLET_PRIVATE_KEY environment variable is not set');
+        throw new Error('Private key not set. Set WALLET_PRIVATE_KEY or POLYMARKET_PRIVATE_KEY in .env');
       }
 
       const chainId = parseInt(process.env.CHAIN_ID) || 137;
       const clobApiUrl = process.env.CLOB_API_URL || 'https://clob.polymarket.com';
       const signatureType = parseInt(process.env.SIGNATURE_TYPE) || 0;
-      const funderAddress = process.env.POLYMARKET_FUNDER_ADDRESS || undefined;
+      // Support both POLYMARKET_FUNDER_ADDRESS and POLYMARKET_WALLET_ADDRESS
+      const funderAddress = process.env.POLYMARKET_FUNDER_ADDRESS || process.env.POLYMARKET_WALLET_ADDRESS || undefined;
 
       const wallet = new Wallet(privateKey);
 
-      // Create a temporary client without creds to derive/create API key
-      const tempClient = new ClobClient(
-        clobApiUrl,
-        chainId,
-        wallet,
-        undefined,
-        signatureType,
-        funderAddress
-      );
+      // Use existing API credentials directly if provided (more reliable than deriving)
+      const apiKey = process.env.POLY_API_KEY;
+      const apiSecret = process.env.POLY_API_SECRET;
+      const apiPassphrase = process.env.POLY_API_PASSPHRASE;
 
-      const creds = await tempClient.createOrDeriveApiKey();
+      let creds;
+      if (apiKey && apiSecret && apiPassphrase) {
+        creds = { key: apiKey, secret: apiSecret, passphrase: apiPassphrase };
+        console.log('✅ LiveTrader: Using existing API credentials from environment');
+      } else {
+        // Fallback: derive credentials from wallet
+        console.log('⚠️ LiveTrader: No API credentials in env, deriving from wallet...');
+        const tempClient = new ClobClient(clobApiUrl, chainId, wallet, undefined, signatureType, funderAddress);
+        creds = await tempClient.createOrDeriveApiKey();
+        console.log('✅ LiveTrader: API credentials derived successfully');
+      }
 
       // Create the final client with credentials
-      this.clobClient = new ClobClient(
-        clobApiUrl,
-        chainId,
-        wallet,
-        creds,
-        signatureType,
-        funderAddress
-      );
+      this.clobClient = new ClobClient(clobApiUrl, chainId, wallet, creds, signatureType, funderAddress);
 
       this.initialized = true;
       console.log('✅ LiveTrader: CLOB client initialized successfully');
+      console.log(`   Wallet: ${wallet.address}`);
+      console.log(`   Funder: ${funderAddress || 'not set'}`);
+      console.log(`   Chain: ${chainId}`);
       return true;
     } catch (error) {
       this.initError = error.message;

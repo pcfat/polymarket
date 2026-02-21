@@ -122,26 +122,35 @@ class LiveTrader {
         return { success: false, errorMsg: `Unsupported order side: ${side}. Only BUY is supported.` };
       }
 
-      // Round price to 2 decimal places (tick size 0.01) and size to 4 decimal places
-      // Polymarket CLOB requires: maker amount max 2 decimals, taker amount max 4 decimals
+      // Round price to 2 decimal places (Polymarket tick size = 0.01)
       const roundedPrice = Math.round(price * 100) / 100;
-      const roundedSize = Math.round(size * 10000) / 10000;
 
-      if (roundedSize < 0.0001) {
-        return { success: false, errorMsg: `Size ${size} too small after rounding to 4 decimals` };
-      }
       if (roundedPrice <= 0 || roundedPrice >= 1) {
-        return { success: false, errorMsg: `Price ${price} invalid after rounding to 2 decimals` };
+        return { success: false, errorMsg: `Price ${price} invalid after rounding to 2 decimals (roundedPrice=${roundedPrice})` };
       }
 
-      console.log(`📋 LiveTrader: Placing order - tokenId=${tokenId}, price=${roundedPrice}, size=${roundedSize}, side=${side}`);
+      // Round size so that size * roundedPrice has at most 2 decimal places
+      // Simplest approach: floor (size * roundedPrice) to 2 decimals, then derive size back
+      const rawDollarCost = size * roundedPrice;
+      const roundedDollarCost = Math.floor(rawDollarCost * 100) / 100; // Floor to 2 decimals to meet CLOB API requirement for makerAmount
+      const roundedSize = roundedDollarCost / roundedPrice;
+      // Final size rounded to 4 decimals (taker amount max precision)
+      const finalSize = Math.floor(roundedSize * 10000) / 10000;
+
+      if (finalSize < 1) {
+        return { success: false, errorMsg: `Size ${size} too small after rounding (finalSize=${finalSize})` };
+      }
+
+      // Verify: finalSize * roundedPrice should have at most 2 decimal places
+      const verifyDollarCost = Math.floor(finalSize * roundedPrice * 100) / 100;
+      console.log(`📋 LiveTrader: Placing order - tokenId=${tokenId}, price=${roundedPrice}, size=${finalSize}, dollarCost=${verifyDollarCost}, side=${side}`);
 
       const response = await this.clobClient.createAndPostOrder(
         {
           tokenID: tokenId,
           price: roundedPrice,
           side: clobSide,
-          size: roundedSize
+          size: finalSize
         },
         { tickSize: '0.01', negRisk: false },
         OrderType.FOK

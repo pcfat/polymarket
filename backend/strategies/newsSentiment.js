@@ -9,6 +9,7 @@ const FEAR_GREED_FALLBACK_WEIGHT = 0.5; // Weight for F&G when only price data a
 // News sentiment analysis constants
 const KEYWORD_NORMALIZATION = 5;        // Divisor to normalize keyword scores to -1 to +1 range
 const RECENCY_DECAY = 0.5;              // Weight decay factor from newest to oldest posts
+const FG_NEUTRAL_VALUE = 50;            // Neutral midpoint of the Fear & Greed Index (0-100 scale)
 
 // Coin to ticker symbol mapping for news APIs
 const COIN_TO_TICKER_MAP = {
@@ -24,6 +25,10 @@ const COINGECKO_COIN_IDS = ['bitcoin', 'ethereum', 'solana', 'ripple'];
 // In-memory cache for CoinGecko responses (TTL: 60 seconds)
 const COINGECKO_CACHE_TTL = 60 * 1000;
 const coinGeckoCache = { data: null, timestamp: 0, promise: null };
+
+// In-memory cache for CryptoPanic news responses (TTL: 5 minutes)
+const CRYPTOPANIC_CACHE_TTL = 5 * 60 * 1000;
+const cryptoPanicCache = {}; // keyed by coinName: { data, timestamp }
 
 // Positive keywords for sentiment analysis
 const POSITIVE_WORDS = [
@@ -95,28 +100,40 @@ function getCoinNameForSearch(coin) {
 }
 
 /**
- * Fetch news from CryptoCompare API
+ * Fetch news from CryptoPanic free API
  * @param {string} coinName - Coin name to search (e.g., 'bitcoin')
  * @returns {Array|null} - Array of news articles or null if failed
  */
 async function fetchCryptoNews(coinName) {
   const ticker = COIN_TO_TICKER_MAP[coinName] || 'BTC';
-  
+  const now = Date.now();
+
+  // Serve from cache if still fresh (5-minute TTL)
+  if (cryptoPanicCache[coinName] && (now - cryptoPanicCache[coinName].timestamp) < CRYPTOPANIC_CACHE_TTL) {
+    return cryptoPanicCache[coinName].data;
+  }
+
   try {
-    // CryptoCompare free news API - no auth required for basic access
-    const response = await axios.get('https://min-api.cryptocompare.com/data/v2/news/', {
+    // CryptoPanic free public API - no auth required
+    const response = await axios.get('https://cryptopanic.com/api/free/v1/posts/', {
       params: {
-        categories: ticker,
-        lang: 'EN',
-        sortOrder: 'latest'
+        currencies: ticker,
+        kind: 'news'
       },
       timeout: 5000
     });
-    
-    const articles = Array.isArray(response.data?.Data) ? response.data.Data : [];
-    return articles.slice(0, 20);
+
+    const results = Array.isArray(response.data?.results) ? response.data.results : [];
+    const articles = results.slice(0, 20).map(item => ({ title: item.title }));
+
+    cryptoPanicCache[coinName] = { data: articles, timestamp: now };
+    return articles;
   } catch (error) {
-    console.error(`Error fetching CryptoCompare news for ${coinName}:`, error.message);
+    console.error(`Error fetching CryptoPanic news for ${coinName}:`, error.message);
+    // Keep stale cache data on error rather than returning null
+    if (cryptoPanicCache[coinName]) {
+      return cryptoPanicCache[coinName].data;
+    }
     return null;
   }
 }
@@ -253,16 +270,12 @@ async function fetchFearGreedIndex() {
 }
 
 /**
- * Convert Fear & Greed Index to sentiment score
+ * Convert Fear & Greed Index to sentiment score using linear mapping
  * @param {number} fgValue - Fear & Greed Index value (0-100)
  * @returns {number} - Sentiment score (-1 to 1)
  */
 function fearGreedToScore(fgValue) {
-  if (fgValue <= 25) return -1;      // Extreme Fear
-  if (fgValue <= 45) return -0.5;    // Fear
-  if (fgValue <= 55) return 0;       // Neutral
-  if (fgValue <= 75) return 0.5;     // Greed
-  return 1;                          // Extreme Greed
+  return Math.max(-1, Math.min(1, (fgValue - FG_NEUTRAL_VALUE) / FG_NEUTRAL_VALUE));
 }
 
 /**
@@ -290,7 +303,7 @@ async function analyzeNewsSentiment(coin) {
         score: combinedScore,
         details: {
           coin: coinName,
-          source: 'cryptocompare',
+          source: 'cryptopanic',
           newsCount: articles.length,
           avgSentiment: newsSentiment,
           fearGreedIndex: fearGreed.value,

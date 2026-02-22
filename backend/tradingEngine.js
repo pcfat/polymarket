@@ -277,8 +277,8 @@ class TradingEngine {
           }
 
           // Odds range filter - skip trades at extreme prices
-          const ODDS_MIN_PRICE = parseFloat(this.config.oddsMinPrice) || 0.30;
-          const ODDS_MAX_PRICE = parseFloat(this.config.oddsMaxPrice) || 0.75;
+          const ODDS_MIN_PRICE = parseFloat(this.config.oddsMinPrice) || 0.35;
+          const ODDS_MAX_PRICE = parseFloat(this.config.oddsMaxPrice) || 0.60;
           
           const tokenPrice = analysis.outcome === 'YES' ? prices.yes_price : prices.no_price;
           

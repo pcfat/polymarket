@@ -129,21 +129,17 @@ class LiveTrader {
         return { success: false, errorMsg: `Price ${price} invalid after rounding to 2 decimals (roundedPrice=${roundedPrice})` };
       }
 
-      // Round size so that size * roundedPrice has at most 2 decimal places
-      // Simplest approach: floor (size * roundedPrice) to 2 decimals, then derive size back
-      const rawDollarCost = size * roundedPrice;
-      const roundedDollarCost = Math.floor(rawDollarCost * 100) / 100; // Floor to 2 decimals to meet CLOB API requirement for makerAmount
-      const roundedSize = roundedDollarCost / roundedPrice;
-      // Final size rounded to 4 decimals (taker amount max precision)
-      const finalSize = Math.floor(roundedSize * 10000) / 10000;
+      // Use whole number size to guarantee size * price has at most 2 decimal places
+      // Integer × 2-decimal-place number always produces ≤ 2 decimal places
+      const finalSize = Math.floor(size);
 
       if (finalSize < 1) {
         return { success: false, errorMsg: `Size ${size} too small after rounding (finalSize=${finalSize})` };
       }
 
       // Verify: finalSize * roundedPrice should have at most 2 decimal places
-      const verifyDollarCost = Math.floor(finalSize * roundedPrice * 100) / 100;
-      console.log(`📋 LiveTrader: Placing order - tokenId=${tokenId}, price=${roundedPrice}, size=${finalSize}, dollarCost=${verifyDollarCost}, side=${side}`);
+      const actualCost = finalSize * roundedPrice;
+      console.log(`📋 LiveTrader: Placing order - tokenId=${tokenId}, price=${roundedPrice}, size=${finalSize}, dollarCost=${actualCost.toFixed(2)}, side=${side}`);
 
       const response = await this.clobClient.createAndPostOrder(
         {

@@ -149,7 +149,7 @@ class LiveTrader {
           size: finalSize
         },
         { tickSize: '0.01', negRisk: false },
-        OrderType.FOK
+        OrderType.GTC
       );
 
       if (response && response.success) {

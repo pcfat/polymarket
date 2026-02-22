@@ -153,8 +153,8 @@ class LiveTrader {
       );
 
       if (response && response.success) {
-        console.log(`✅ LiveTrader: Order placed successfully. orderID=${response.orderID}`);
-        return { success: true, orderID: response.orderID };
+        console.log(`✅ LiveTrader: Order placed successfully. orderID=${response.orderID}, status=${response.status}`);
+        return { success: true, orderID: response.orderID, status: response.status };
       }
 
       const errMsg = (response && response.errorMsg) ? response.errorMsg : 'Unknown CLOB error';
@@ -163,6 +163,31 @@ class LiveTrader {
     } catch (error) {
       console.error('❌ LiveTrader: Exception placing order:', error.message);
       return { success: false, errorMsg: error.message };
+    }
+  }
+
+  async getOpenOrders() {
+    const ready = await this.initialize();
+    if (!ready) return [];
+    try {
+      const orders = await this.clobClient.getOpenOrders();
+      return orders || [];
+    } catch (error) {
+      console.error('❌ LiveTrader: Error fetching open orders:', error.message);
+      return [];
+    }
+  }
+
+  async cancelOrder(orderID) {
+    const ready = await this.initialize();
+    if (!ready) return false;
+    try {
+      await this.clobClient.cancelOrder(orderID);
+      console.log(`✅ LiveTrader: Order ${orderID} cancelled`);
+      return true;
+    } catch (error) {
+      console.error(`❌ LiveTrader: Error cancelling order ${orderID}:`, error.message);
+      return false;
     }
   }
 }

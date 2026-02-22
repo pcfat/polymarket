@@ -18,6 +18,7 @@ class TradingEngine {
     this.marketScanJob = null;
     this.tradeCheckJob = null;
     this.settlementJob = null;
+    this.pendingOrderJob = null;
     this.processedTrades = new Set(); // Track processed market+outcome combinations
     this.strategyWeights = DEFAULT_WEIGHTS; // Strategy weights for composite analysis
     this.latestAnalysis = {}; // Store latest analysis for each market
@@ -69,10 +70,17 @@ class TradingEngine {
         });
       });
 
-      // Settle paper trades every 30 seconds
+      // Settle trades every 30 seconds
       this.settlementJob = cron.schedule('*/30 * * * * *', () => {
-        this.settlePaperTrades().catch(err => {
+        this.settleTrades().catch(err => {
           console.error('❌ [Cron] Settlement error:', err.message);
+        });
+      });
+
+      // Check pending GTC orders every 30 seconds
+      this.pendingOrderJob = cron.schedule('*/30 * * * * *', () => {
+        this.checkPendingOrders().catch(err => {
+          console.error('❌ [Cron] Pending order check error:', err.message);
         });
       });
       
@@ -114,6 +122,11 @@ class TradingEngine {
     if (this.settlementJob) {
       this.settlementJob.stop();
       this.settlementJob = null;
+    }
+
+    if (this.pendingOrderJob) {
+      this.pendingOrderJob.stop();
+      this.pendingOrderJob = null;
     }
 
     this.emitStatus();
@@ -626,8 +639,14 @@ class TradingEngine {
         } else {
           const response = await liveTrader.placeOrder({ tokenId, price, size: shares, side: 'BUY' });
           if (response.success) {
-            trade.status = 'filled';
             trade.order_id = response.orderID;
+            if (response.status === 'matched') {
+              trade.status = 'filled';
+              console.log(`✅ Order matched immediately: ${response.orderID}`);
+            } else {
+              trade.status = 'pending';
+              console.log(`⏳ Order placed on orderbook (status: ${response.status}): ${response.orderID}`);
+            }
           } else {
             trade.status = 'failed';
             trade.notes += ` | Live order failed: ${response.errorMsg}`;
@@ -714,18 +733,18 @@ class TradingEngine {
     return null; // Not yet resolved
   }
 
-  // Settle paper trades after market expiration
-  async settlePaperTrades() {
+  // Settle trades after market expiration
+  async settleTrades() {
     if (!this.isRunning) return;
 
     try {
-      const unsettledTrades = this.db.getUnsettledPaperTrades();
+      const unsettledTrades = this.db.getUnsettledTrades();
       
       if (unsettledTrades.length === 0) {
         return;
       }
 
-      console.log(`🔍 Checking ${unsettledTrades.length} unsettled paper trades...`);
+      console.log(`🔍 Checking ${unsettledTrades.length} unsettled trades...`);
 
       for (const trade of unsettledTrades) {
         try {
@@ -784,7 +803,7 @@ class TradingEngine {
           this.db.updateTrade(trade.id, { pnl: calculatedPnl });
 
           // Update stats
-          const stats = this.db.getStats('paper');
+          const stats = this.db.getStats(trade.mode);
           this.db.updateStatus({ 
             total_trades: stats.total_trades,
             total_pnl: stats.total_pnl
@@ -796,7 +815,7 @@ class TradingEngine {
           this.io.emit('stats', stats);
           
           // Emit recent trades
-          const recentTrades = this.db.getTrades(10, 'paper');
+          const recentTrades = this.db.getTrades(10, trade.mode);
           this.io.emit('recentTrades', recentTrades);
 
           console.log(`✅ Trade ${trade.id} settled successfully`);
@@ -805,13 +824,61 @@ class TradingEngine {
         }
       }
     } catch (error) {
-      console.error('❌ Error in settlePaperTrades:', error.message);
+      console.error('❌ Error in settleTrades:', error.message);
     }
   }
 
   updateWeights(newWeights) {
     this.strategyWeights = { ...this.strategyWeights, ...newWeights };
     console.log('⚙️ Strategy weights updated:', this.strategyWeights);
+  }
+
+  // Check pending GTC live orders and update their status
+  async checkPendingOrders() {
+    if (!this.isRunning) return;
+
+    try {
+      const pendingTrades = this.db.getPendingLiveTrades();
+
+      if (pendingTrades.length === 0) {
+        return;
+      }
+
+      console.log(`🔍 Checking ${pendingTrades.length} pending live orders...`);
+
+      const openOrders = await liveTrader.getOpenOrders();
+      const openOrderIds = new Set(openOrders.map(o => o.id || o.orderID));
+
+      for (const trade of pendingTrades) {
+        try {
+          if (!trade.order_id) {
+            console.log(`⚠️ Pending trade ${trade.id} has no order_id, marking as failed`);
+            this.db.updateTrade(trade.id, { status: 'failed' });
+            continue;
+          }
+
+          if (openOrderIds.has(trade.order_id)) {
+            // Order still open on the orderbook — not yet filled
+            console.log(`⏳ Order ${trade.order_id} still open for trade ${trade.id}`);
+          } else {
+            // Order no longer in open orders — assume it was filled
+            console.log(`✅ Order ${trade.order_id} no longer open, marking trade ${trade.id} as filled`);
+            this.db.updateTrade(trade.id, { status: 'filled' });
+
+            // Emit update to frontend
+            const updatedTrade = this.db.getTradeById(trade.id);
+            this.io.emit('tradeUpdated', updatedTrade);
+
+            const stats = this.db.getStats('live');
+            this.io.emit('stats', stats);
+          }
+        } catch (error) {
+          console.error(`❌ Error checking pending trade ${trade.id}:`, error.message);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error in checkPendingOrders:', error.message);
+    }
   }
 
   getLatestAnalysis() {
